@@ -181,9 +181,20 @@ the cheaper tiers save.
 
 The footer is fenced because markdown collapses leading whitespace and joins
 consecutive lines: unfenced, the rule and the two rows render as one run-on
-paragraph. It is emitted as a chunk the hook built rather than one the engine
-streamed, which the engine takes at its word, and only on a step whose stop
-reason ends the turn — a `tool_use` step is mid-reply.
+paragraph. `<details>` was tried first, for a fold; the desktop app renders it
+as raw tags.
+
+It is emitted as a chunk the hook built rather than one the engine streamed,
+at **one past the last text block's index**, and only on a step whose stop
+reason ends the turn — a `tool_use` step is mid-reply. The index is
+load-bearing: a chunk yielded at an index the engine has already streamed is
+dropped silently. Probed live, a chunk at `lastTextIndex` never reached the
+transcript and one at `lastTextIndex + 1` did, so the footer opens a block of
+its own and the reply above it is untouched.
+
+Note that `claude -p` shows only the *last* text block in its `result`, so the
+reply looks like it vanished when the footer lands. It has not:
+`--output-format stream-json --verbose` shows both blocks whole.
 
 `/jev quiet` drops both the line and the footer without turning routing off;
 `/jev loud` brings them back. Both ride in the reply's recorded text, so the

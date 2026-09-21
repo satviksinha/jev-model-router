@@ -196,15 +196,23 @@ export function register(on: On) {
         const attempt = byTurn.get(e.turnId)
         if (attempt && chunk.usage) addUsage(attempt, chunk.usage)
 
-        // Built afresh, so it carries no `ref`: the engine takes a chunk a
-        // hook made at its word. It goes before the stop chunk, which is the
-        // last thing the engine expects to see.
+        // The index must be one past the last text block, and this is
+        // load-bearing. A chunk yielded at an index the engine already
+        // streamed is dropped on the floor, silently: probed live, a chunk
+        // at `lastTextIndex` never reached the transcript, one at
+        // `lastTextIndex + 1` did. It opens a block of its own, which is
+        // what a footer wants anyway — the reply above it stays untouched.
+        //
+        // No `ref`, because the engine's handle belongs to a chunk the
+        // engine streamed; one a hook built has none and is taken at its
+        // word. It goes before the stop chunk, the last thing the engine
+        // expects to see.
         if (attempt && announce && !MID_TURN.has(chunk.stopReason ?? '')) {
           const footer = usageFooter(attempt)
           if (footer !== null) {
             yield {
               kind: 'text' as const,
-              index: lastTextIndex,
+              index: lastTextIndex + 1,
               text: `${FOOTER_SEPARATOR}${footer}`,
             }
           }

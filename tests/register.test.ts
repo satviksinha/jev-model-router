@@ -193,6 +193,11 @@ describe('register: the route in the reply', () => {
     assert.match(footer, /api {2}claude-opus-5 ✓/)
     assert.equal(chunks.at(-1)!.kind, 'stop', 'the footer goes before the stop chunk')
     assert.equal(texts.at(-1)!.ref, undefined, 'a chunk we made carries no engine handle')
+
+    // Load-bearing: the engine drops a chunk yielded at an index it already
+    // streamed. One past the last text block opens a block of its own.
+    const reply = texts.find(c => c.ref !== undefined)!
+    assert.equal(texts.at(-1)!.index, reply.index + 1)
   })
 
   test('a step that only called a tool gets no footer, since the turn goes on', async () => {
