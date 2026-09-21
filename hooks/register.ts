@@ -15,6 +15,7 @@ import {
   statusReport,
   toggleReply,
   usageFooter,
+  type AgentTag,
   type Attempt,
 } from './status.ts'
 
@@ -26,6 +27,20 @@ const CACHE_LIMIT = 32
  * the footer would land in the middle of a reply. Every other reason ends it.
  */
 const MID_TURN: ReadonlySet<string> = new Set(['tool_use', 'pause_turn'])
+
+/**
+ * Names the subagent a step runs in, from the session's agent list. A row may
+ * not be there yet for a loop that only just started; then the id stands in,
+ * which still says "not the main loop", the part that matters.
+ */
+async function agentTagOf(
+  $: { agent: { list: () => Promise<readonly { id: string; type: string; description: string }[]> } },
+  agentId: string,
+): Promise<AgentTag> {
+  const rows = await $.agent.list().catch(() => [])
+  const row = rows.find(r => r.id === agentId)
+  return row ? { type: row.type, label: row.description } : { label: agentId }
+}
 
 /**
  * Registers the router: one Jev call per turn, applied to every model request
@@ -44,8 +59,12 @@ const MID_TURN: ReadonlySet<string> = new Set(['tool_use', 'pause_turn'])
  */
 export function register(on: On) {
   const decisions = new Map<string, Decision>()
-  /** turnId → the line to put in front of the reply, until it has been. */
-  const pending = new Map<string, string>()
+  /**
+   * Turns whose reply has yet to open with its route line. The line itself is
+   * built at the first text chunk, not here: by then the step has said which
+   * loop the turn runs in, which the line names.
+   */
+  const pending = new Set<string>()
   const attempts: Attempt[] = []
   /**
    * turnId → its attempt, so each step's `stop` chunk can add what the API
@@ -62,6 +81,14 @@ export function register(on: On) {
       const oldest = map.keys().next()
       if (oldest.done) break
       map.delete(oldest.value)
+    }
+  }
+
+  const trimSet = (set: Set<string>) => {
+    while (set.size > CACHE_LIMIT) {
+      const oldest = set.values().next()
+      if (oldest.done) break
+      set.delete(oldest.value)
     }
   }
 
@@ -148,8 +175,8 @@ export function register(on: On) {
     // hooks and $.ui.log both drew nothing in the desktop app; the model's
     // text is the one channel that reaches every surface.
     if (announce) {
-      pending.set(e.turnId, liveLine(attempt))
-      trim(pending)
+      pending.add(e.turnId)
+      trimSet(pending)
     }
 
     if ('decision' in attempt) {
@@ -173,6 +200,27 @@ export function register(on: On) {
   // that reaches a surface which draws neither render sites nor ui.log.
   on('turn.step', async function* ($, e, next) {
     const decision = decisions.get(e.turnId)
+
+    // A subagent's loop gets no turn.start (probed live: its steps arrive
+    // with agentId set and nothing in byTurn), so its turn is first seen
+    // here. It is not routed: there is no prompt to ask Jev about, and a
+    // line in its reply would land in the tool result its parent reads. It
+    // is recorded, though, with the model that ran it, or /jev would show
+    // one prompt and hide the four requests it caused.
+    let attempt = byTurn.get(e.turnId)
+    if (attempt === undefined && e.agentId !== undefined) {
+      const agent = await agentTagOf($, e.agentId)
+      attempt = {
+        prompt: agent.label,
+        ms: 0,
+        skipped: 'subagent runs on the session model',
+        kind: 'agent',
+        agent,
+      }
+      record(attempt)
+      byTurn.set(e.turnId, attempt)
+      trim(byTurn)
+    }
     const step = decision
       ? next({ ...e, model: decision.model, effort: decision.effort })
       : next(e)
@@ -182,18 +230,16 @@ export function register(on: On) {
     let lastTextIndex = 0
 
     for await (const chunk of step) {
-      const label = pending.get(e.turnId)
       if (chunk.kind === 'text') {
         lastTextIndex = chunk.index
-        if (label !== undefined) {
+        if (attempt && pending.has(e.turnId)) {
           pending.delete(e.turnId)
-          yield { ...chunk, text: `${label}${REPLY_SEPARATOR}${chunk.text}` }
+          yield { ...chunk, text: `${liveLine(attempt)}${REPLY_SEPARATOR}${chunk.text}` }
           continue
         }
       }
 
       if (chunk.kind === 'stop') {
-        const attempt = byTurn.get(e.turnId)
         if (attempt && chunk.usage) addUsage(attempt, chunk.usage)
 
         // The index must be one past the last text block, and this is
@@ -207,7 +253,13 @@ export function register(on: On) {
         // engine streamed; one a hook built has none and is taken at its
         // word. It goes before the stop chunk, the last thing the engine
         // expects to see.
-        if (attempt && announce && !MID_TURN.has(chunk.stopReason ?? '')) {
+        // Not in a subagent's reply: that is a tool result its parent reads.
+        if (
+          attempt &&
+          announce &&
+          attempt.kind !== 'agent' &&
+          !MID_TURN.has(chunk.stopReason ?? '')
+        ) {
           const footer = usageFooter(attempt)
           if (footer !== null) {
             yield {

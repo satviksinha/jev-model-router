@@ -335,3 +335,56 @@ describe('usage footer', () => {
     for (const line of lines) assert.ok([...line].length < 100, line)
   })
 })
+
+describe('turns that are not a typed prompt', () => {
+  const notice = `<task-notification>
+<task-id>a8fb449ee56c09</task-id>
+<status>completed</status>
+<summary>Agent "Review library-sync cluster" completed</summary>
+</task-notification>`
+
+  test('a task notification is recognised and its summary kept as the prompt', () => {
+    const a = attemptOf(notice, { ok: true, ms: 653, answers: {} as never }, ['fable'])
+    assert.equal(a.kind, 'notify')
+    assert.equal(a.prompt, 'Agent "Review library-sync cluster" completed')
+  })
+
+  test('a notification without a summary falls back to its id', () => {
+    const a = attemptOf('<task-notification><task-id>abc123</task-id></task-notification>', { ok: false, ms: 0, reason: 'x' }, ['fable'])
+    assert.equal(a.kind, 'notify')
+    assert.equal(a.prompt, 'task abc123')
+  })
+
+  test('a typed prompt has no kind', () => {
+    assert.equal(attemptOf('plan it', { ok: false, ms: 0, reason: 'x' }, ['fable']).kind, undefined)
+  })
+
+  const notify: Attempt = { prompt: 'Agent "Review library-sync cluster" completed', ms: 653, decision, kind: 'notify' }
+
+  test('the live line marks a notification turn, so a wake-up is not read as a reply to the person', () => {
+    assert.equal(liveLine(notify), '> ✳️ `fable` · xhigh · 97% · notify · 653ms')
+  })
+
+  test('the history tags it and shows the summary, not the envelope', () => {
+    assert.match(statusReport({ ...base, attempts: [notify] }), /fable·xhigh 0\.97 {2}\[notify\] Agent "Review library-sync cluster" complet/)
+  })
+
+  test('the footer’s jev row carries the tag', () => {
+    addUsage(notify, { model: 'claude-fable-5-1', input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0 })
+    assert.match(usageFooter(notify)!, /jev {2}fable·xhigh · 97% · notify · 653ms/)
+  })
+
+  test('a subagent’s steps are listed as unrouted, under the agent’s name', () => {
+    const sub: Attempt = {
+      prompt: 'Review library-sync cluster',
+      ms: 0,
+      skipped: 'subagent runs on the session model',
+      kind: 'agent',
+      agent: { type: 'Explore', label: 'Review library-sync cluster' },
+    }
+    addUsage(sub, { model: 'claude-opus-5', input_tokens: 1000, output_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
+    const text = statusReport({ ...base, attempts: [sub] })
+    assert.match(text, /unrouted — \[agent:Explore\] Review library-sync cluster/)
+    assert.match(text, /answered claude-opus-5 {2}cache 0%/)
+  })
+})

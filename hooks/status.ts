@@ -32,7 +32,49 @@ export type Attempt = {
   prompt: string
   ms: number
   usage?: Usage
+  /**
+   * What started the turn, when it was not the person typing. Absent for a
+   * typed prompt. `notify`: the main loop woke because a background task
+   * finished, and the engine's `<task-notification>` was the turn's text.
+   * `agent`: a subagent's own loop, which no `turn.start` announces; its
+   * steps are seen but not routed. Without this, one prompt that spawned
+   * three reviewers read as one reply that changed model three times.
+   */
+  kind?: 'notify' | 'agent'
+  /** For `kind: 'agent'`: which subagent, as `$.agent.list()` describes it. */
+  agent?: AgentTag
 } & ({ decision: Decision } | { skipped: string })
+
+/**
+ * Which subagent a turn ran in. `type` is the definition (`general-purpose`,
+ * `Explore`); `label` its row's description (`Review library-sync cluster`),
+ * or the id when the list has no row for it yet, in which case `type` is
+ * absent too.
+ */
+export type AgentTag = {
+  type?: string
+  label: string
+}
+
+/** The short tag for a turn nobody typed: `notify`, `agent:Explore`, `agent`. */
+export function kindMark(attempt: Pick<Attempt, 'kind' | 'agent'>): string | null {
+  if (attempt.kind === 'notify') return 'notify'
+  if (attempt.kind === 'agent') return attempt.agent?.type ? `agent:${attempt.agent.type}` : 'agent'
+  return null
+}
+
+const NOTIFICATION = /^\s*<task-notification>/
+const tagOf = (text: string, tag: string) =>
+  text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim()
+
+/**
+ * Reads the engine's task notification, when the turn's text is one: what
+ * the row should say instead of the XML envelope.
+ */
+export function notificationOf(text: string): string | null {
+  if (!NOTIFICATION.test(text)) return null
+  return tagOf(text, 'summary') ?? `task ${tagOf(text, 'task-id') ?? '?'}`
+}
 
 /**
  * Folds one step's usage into its turn: counts sum, the model is the last
@@ -82,21 +124,24 @@ export type Status = {
  * route all land in one place and all get announced the same way.
  */
 export function attemptOf(
-  prompt: string,
+  text: string,
   result: JevResult,
   offered: readonly Tier[],
 ): Attempt {
-  if (!result.ok) return { prompt, ms: result.ms, skipped: result.reason }
+  const summary = notificationOf(text)
+  const head = summary === null ? { prompt: text } : { prompt: summary, kind: 'notify' as const }
+
+  if (!result.ok) return { ...head, ms: result.ms, skipped: result.reason }
 
   const decision = decisionOf(result.answers, offered)
   if (!decision) {
     return {
-      prompt,
+      ...head,
       ms: result.ms,
       skipped: 'Jev answered but named no tier we offered',
     }
   }
-  return { prompt, ms: result.ms, decision }
+  return { ...head, ms: result.ms, decision }
 }
 
 /** The last few turns, newest first, so the report stays one screen. */
@@ -109,12 +154,17 @@ function shorten(text: string, width = 44): string {
 
 function attemptLine(attempt: Attempt): string {
   const when = `${String(attempt.ms).padStart(4)}ms`
+  const mark = kindMark(attempt)
+  const what = `${mark ? `[${mark}] ` : ''}${shorten(attempt.prompt)}`
   if ('skipped' in attempt) {
-    return `  ${when}  unrouted — ${attempt.skipped}`
+    // A subagent's row names the agent, since "unrouted" is the whole story.
+    return attempt.kind === 'agent'
+      ? `  ${when}  unrouted — ${what}`
+      : `  ${when}  unrouted — ${attempt.skipped}`
   }
   const { tier, effort, confidence } = attempt.decision
   const doubt = confidence < LOW_CONFIDENCE ? ' (low confidence)' : ''
-  return `  ${when}  ${tier}·${effort} ${confidence.toFixed(2)}${doubt}  ${shorten(attempt.prompt)}`
+  return `  ${when}  ${tier}·${effort} ${confidence.toFixed(2)}${doubt}  ${what}`
 }
 
 /** Thousands, rounded, for token counts: 130k, 2k, 0k. */
@@ -182,7 +232,8 @@ export function usageFooter(attempt: Attempt): string | null {
   if ('decision' in attempt) {
     const { tier, effort, confidence, model: asked } = attempt.decision
     const matches = usage.model === asked || usage.model.startsWith(`${asked}-`)
-    jev = `${tier}·${effort} · ${Math.round(confidence * 100)}% · ${attempt.ms}ms`
+    const mark = kindMark(attempt)
+    jev = `${tier}·${effort} · ${Math.round(confidence * 100)}%${mark ? ` · ${mark}` : ''} · ${attempt.ms}ms`
     api = `${usage.model}${matches ? ' ✓' : ` ≠ ${asked}`} · ${cost}`
   } else {
     jev = `unrouted — ${attempt.skipped}`
@@ -263,7 +314,8 @@ export function liveLine(attempt: Attempt): string {
   const { tier, effort, confidence } = attempt.decision
   const doubt = confidence < LOW_CONFIDENCE ? '?' : ''
   const pct = Math.round(confidence * 100)
-  return `> ✳️ \`${tier}\` · ${effort} · ${pct}%${doubt} · ${attempt.ms}ms`
+  const mark = kindMark(attempt)
+  return `> ✳️ \`${tier}\` · ${effort} · ${pct}%${doubt}${mark ? ` · ${mark}` : ''} · ${attempt.ms}ms`
 }
 
 /**

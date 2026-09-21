@@ -8,6 +8,7 @@ import { register } from '../hooks/register.ts'
  * registers, then runs turn.start and turn.step the way the engine would.
  */
 function load(env: Record<string, string> = { AI_GATEWAY_API_KEY: 'gw-key' }) {
+  let listCalls = 0
   const hooks = new Map<string, Function>()
   const on = (name: string, a: unknown, b?: unknown) => {
     const key = typeof a === 'function' ? name : `${name}:${JSON.stringify(a)}`
@@ -34,8 +35,16 @@ function load(env: Record<string, string> = { AI_GATEWAY_API_KEY: 'gw-key' }) {
     },
     command: { register: async () => {} },
     session: { surface: async () => 'test' },
+    agent: {
+      list: async () => {
+        listCalls++
+        return [
+          { id: 'agent-1', type: 'general-purpose', description: 'Review library-sync cluster', status: 'running' },
+        ]
+      },
+    },
   }
-  return { hooks, $ }
+  return { hooks, $, listCalls: () => listCalls }
 }
 
 async function* modelSays(...texts: string[]) {
@@ -231,5 +240,58 @@ describe('register: the route in the reply', () => {
     await hooks.get('turn.start')!($, { text: 'x', turnId: 't13' }, async (e: unknown) => e)
     const chunks = await collect(hooks.get('turn.step')!($, { turnId: 't13', index: 0 }, () => modelSays('reply')))
     assert.doesNotMatch(chunks.filter(c => c.kind === 'text').map(c => c.text).join(''), /jev {2}opus/)
+  })
+
+  test('a turn started by a task notification is tagged notify, in the line and the footer', async () => {
+    const { hooks, $ } = load()
+    const notice = '<task-notification><task-id>abc</task-id><summary>Agent "reviewer" completed</summary></task-notification>'
+    await hooks.get('turn.start')!($, { text: notice, turnId: 'n1' }, async (e: unknown) => e)
+    const chunks = await collect(hooks.get('turn.step')!($, { turnId: 'n1', index: 0 }, () => answeredBy('claude-opus-5')))
+    const texts = chunks.filter(c => c.kind === 'text').map(c => c.text)
+    assert.match(texts[0]!, /^> ✳️ `opus` · high · 91% · notify · 0ms/)
+    assert.match(texts.at(-1)!, /jev {2}opus·high · 91% · notify · 0ms/)
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.match(out.text, /\[notify\] Agent "reviewer" completed/)
+  })
+
+  test('a subagent’s step, which no turn.start announced, is recorded unrouted with what ran it', async () => {
+    const { hooks, $, listCalls } = load()
+    let sent: { model?: string } = {}
+    const chunks = await collect(
+      hooks.get('turn.step')!($, { turnId: 'sub1', index: 0, agentId: 'agent-1', model: 'claude-opus-5' }, (e: { model: string }) => {
+        sent = e
+        return answeredBy('claude-opus-5')
+      }),
+    )
+    assert.equal(sent.model, 'claude-opus-5', 'left on the session model')
+    assert.equal(chunks.filter(c => c.kind === 'text').map(c => c.text).join(''), 'reply', 'nothing added to a tool result the parent will read')
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.match(out.text, /unrouted — \[agent:general-purpose\] Review library-sync cluster/)
+    assert.match(out.text, /answered claude-opus-5/)
+    assert.equal(listCalls(), 1)
+  })
+
+  test('a subagent’s later steps add to the same record, and read the list once', async () => {
+    const { hooks, $, listCalls } = load()
+    await collect(hooks.get('turn.step')!($, { turnId: 'sub2', index: 0, agentId: 'agent-1' }, () => answeredBy('claude-opus-5', 'tool_use', 1000)))
+    await collect(hooks.get('turn.step')!($, { turnId: 'sub2', index: 1, agentId: 'agent-1' }, () => answeredBy('claude-opus-5', 'end_turn', 3000)))
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.equal(out.text.match(/unrouted — \[agent/g)?.length, 1)
+    assert.match(out.text, /22k in/)
+    assert.equal(listCalls(), 1)
+  })
+
+  test('an agent the list does not know yet is still recorded, by its id', async () => {
+    const { hooks, $ } = load()
+    await collect(hooks.get('turn.step')!($, { turnId: 'sub3', index: 0, agentId: 'agent-unknown-xyz' }, () => answeredBy('claude-opus-5')))
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.match(out.text, /unrouted — \[agent\] agent-unknown-xyz/)
+  })
+
+  test('a main-loop step never touches the agent list', async () => {
+    const { hooks, $, listCalls } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 's4' }, async (e: unknown) => e)
+    await collect(hooks.get('turn.step')!($, { turnId: 's4', index: 0 }, () => answeredBy('claude-opus-5')))
+    assert.equal(listCalls(), 0)
   })
 })

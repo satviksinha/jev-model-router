@@ -100,12 +100,32 @@ jev-router
   tiers     haiku, sonnet, opus, fable
 
   Recent turns, newest first:
+   653ms  fable·xhigh 0.61  [notify] Agent "Review library-sync cluster" com…
+          answered claude-fable-5-1 ✓  cache 98%  45k in  1k out
+     0ms  unrouted — [agent:general-purpose] Review library-sync cluster
+          answered claude-opus-5  cache 82%  22k in  0k out
    641ms  fable·xhigh 0.97  help me plan the architecture
           answered claude-fable-5-1 ✓  cache 91%  130k in  2k out
    402ms  haiku·medium 0.75  rename the variable foo to bar
           answered claude-haiku-4-5 ✓  cache 4%  128k in  0k out
     12ms  unrouted — gateway said HTTP 403 (customer_verification_required)
 ```
+
+Not every turn is you typing, and the history says which are not. A prompt
+that spawns background agents produces more turns than replies: each agent
+that finishes wakes the main loop with a `<task-notification>`, and the engine
+starts a fresh turn with that XML as its text. Those are tagged `[notify]`,
+with the notification's summary in place of the envelope, and the same tag
+rides in the route line and footer of the reply they produce (`· notify ·`).
+Without it, one prompt that dispatched three reviewers reads as one reply that
+changed model three times.
+
+The agents themselves are the `[agent:type]` rows. A subagent's loop gets no
+`turn.start`, so the router never sees a prompt to ask Jev about, and it runs
+on whatever the Agent tool resolved (the session model, usually). It is listed
+as unrouted with the model that answered it, so the requests one prompt really
+caused are all on the screen. Nothing is written into a subagent's reply: that
+text is a tool result its parent reads.
 
 The same `answered` information is under each reply as it happens, in the
 footer below; `/jev` is where you go to see it across turns.
