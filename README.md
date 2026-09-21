@@ -86,7 +86,7 @@ where it loads on its own next session.
 
 ## Knowing whether it is working
 
-Three signals, in order of how much you can trust them.
+Four signals, in order of how much you can trust them.
 
 **`/jev`** prints the full state. A command's output row draws on every
 surface, so this always works:
@@ -106,6 +106,9 @@ jev-router
           answered claude-haiku-4-5 ✓  cache 4%  128k in  0k out
     12ms  unrouted — gateway said HTTP 403 (customer_verification_required)
 ```
+
+The same `answered` information is under each reply as it happens, in the
+footer below; `/jev` is where you go to see it across turns.
 
 An unrouted turn says why. That matters because the router fails open, so a
 dead provider and a missing plugin look identical from the outside.
@@ -144,8 +147,48 @@ rule on the line directly after text is a setext heading underline, and the
 route would render as a heading.
 
 An unrouted turn opens with `> ⚠️ \`unrouted\` · reason`. A `?` after the
-percentage means Jev was under 50% sure. `/jev quiet` drops the line without
-turning routing off; `/jev loud` brings it back.
+percentage means Jev was under 50% sure.
+
+**The footer under every finished reply**, which is the same information
+settled. The top line is what the router asked for, before the reply exists;
+the footer is what the API says it got, and it can only be written once the
+response is whole:
+
+```
+──────────────────────────────────────────────────────
+jev  fable·xhigh · 97% · 641ms
+api  claude-fable-5-1 ✓ · cache 90% · 130k in · 1k out
+```
+
+`api` is read off the `usage` on the step's stop chunk, so `✓` is the API's
+own confirmation that the model rewrite landed — no proxy, no bogus model id.
+A dated id such as `claude-fable-5-1-20260901` still counts as a match; a real
+mismatch reads `claude-opus-5 ≠ claude-fable-5-1`.
+
+`cache` is the share of the turn's input read from the prompt cache. The cache
+is per model, so the turn after a switch runs cold:
+
+```
+─────────────────────────────────────────────────────
+jev  haiku·medium · 75% · 402ms
+api  claude-haiku-4-5 ✓ · cache 4% · 128k in · 0k out
+```
+
+That `4%` is the price of leaving fable. Cache reads bill at a tenth of
+uncached input, so a switch on a large context costs roughly ten times what
+staying would have, once. Watch it to see whether the switching is eating what
+the cheaper tiers save.
+
+The footer is fenced because markdown collapses leading whitespace and joins
+consecutive lines: unfenced, the rule and the two rows render as one run-on
+paragraph. It is emitted as a chunk the hook built rather than one the engine
+streamed, which the engine takes at its word, and only on a step whose stop
+reason ends the turn — a `tool_use` step is mid-reply.
+
+`/jev quiet` drops both the line and the footer without turning routing off;
+`/jev loud` brings them back. Both ride in the reply's recorded text, so the
+model sees them on its own past replies; that is the standing cost of a marker
+on a surface that draws neither render sites nor `ui.log`.
 
 The line is part of the recorded message, so the model sees its own past
 replies open with it. That is the cost of a marker that reaches the desktop

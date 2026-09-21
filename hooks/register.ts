@@ -10,14 +10,22 @@ import {
   attemptOf,
   HISTORY_LIMIT,
   liveLine,
+  FOOTER_SEPARATOR,
   REPLY_SEPARATOR,
   statusReport,
   toggleReply,
+  usageFooter,
   type Attempt,
 } from './status.ts'
 
 /** Turns kept in the decision cache before the oldest are dropped. */
 const CACHE_LIMIT = 32
+
+/**
+ * Stop reasons that mean the turn continues: the engine will step again, so
+ * the footer would land in the middle of a reply. Every other reason ends it.
+ */
+const MID_TURN: ReadonlySet<string> = new Set(['tool_use', 'pause_turn'])
 
 /**
  * Registers the router: one Jev call per turn, applied to every model request
@@ -169,17 +177,40 @@ export function register(on: On) {
       ? next({ ...e, model: decision.model, effort: decision.effort })
       : next(e)
 
+    // The block the footer joins, so it lands at the end of the reply's text
+    // rather than opening a block of its own.
+    let lastTextIndex = 0
+
     for await (const chunk of step) {
       const label = pending.get(e.turnId)
-      if (label !== undefined && chunk.kind === 'text') {
-        pending.delete(e.turnId)
-        yield { ...chunk, text: `${label}${REPLY_SEPARATOR}${chunk.text}` }
-        continue
+      if (chunk.kind === 'text') {
+        lastTextIndex = chunk.index
+        if (label !== undefined) {
+          pending.delete(e.turnId)
+          yield { ...chunk, text: `${label}${REPLY_SEPARATOR}${chunk.text}` }
+          continue
+        }
       }
-      if (chunk.kind === 'stop' && chunk.usage) {
+
+      if (chunk.kind === 'stop') {
         const attempt = byTurn.get(e.turnId)
-        if (attempt) addUsage(attempt, chunk.usage)
+        if (attempt && chunk.usage) addUsage(attempt, chunk.usage)
+
+        // Built afresh, so it carries no `ref`: the engine takes a chunk a
+        // hook made at its word. It goes before the stop chunk, which is the
+        // last thing the engine expects to see.
+        if (attempt && announce && !MID_TURN.has(chunk.stopReason ?? '')) {
+          const footer = usageFooter(attempt)
+          if (footer !== null) {
+            yield {
+              kind: 'text' as const,
+              index: lastTextIndex,
+              text: `${FOOTER_SEPARATOR}${footer}`,
+            }
+          }
+        }
       }
+
       yield chunk
     }
   })

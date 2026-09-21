@@ -153,6 +153,50 @@ function usageLine(attempt: Attempt): string | null {
 }
 
 /**
+ * The footer put at the end of a completed reply: what was asked for, and
+ * what the API says answered.
+ *
+ * It goes at the end because `usage` only exists once the response is whole —
+ * the stop chunk carries it. The route line at the top of the reply is the
+ * immediate signal; this is the settled one.
+ *
+ * Fenced, because markdown collapses leading whitespace and joins consecutive
+ * lines into one paragraph: unfenced, the rule and the two lines would render
+ * as a single run-on. A fence keeps the alignment and reads as data, not prose.
+ */
+export function usageFooter(attempt: Attempt): string | null {
+  const usage = attempt.usage
+  if (!usage) return null
+
+  const carried =
+    usage.input_tokens +
+    usage.cache_read_input_tokens +
+    usage.cache_creation_input_tokens
+  const cost =
+    `cache ${Math.round(cacheRatio(usage) * 100)}% · ` +
+    `${kOf(carried)} in · ${kOf(usage.output_tokens)} out`
+
+  let jev: string
+  let api: string
+
+  if ('decision' in attempt) {
+    const { tier, effort, confidence, model: asked } = attempt.decision
+    const matches = usage.model === asked || usage.model.startsWith(`${asked}-`)
+    jev = `${tier}·${effort} · ${Math.round(confidence * 100)}% · ${attempt.ms}ms`
+    api = `${usage.model}${matches ? ' ✓' : ` ≠ ${asked}`} · ${cost}`
+  } else {
+    jev = `unrouted — ${attempt.skipped}`
+    api = `${usage.model} · ${cost}`
+  }
+
+  const rows = [`jev  ${jev}`, `api  ${api}`]
+  // Count code points: the separators and check marks are multi-byte, and a
+  // rule measured in UTF-16 units would overshoot the text it sits above.
+  const width = Math.max(...rows.map(r => [...r].length))
+  return ['```', '─'.repeat(width), ...rows, '```'].join('\n')
+}
+
+/**
  * The report, as plain lines. Written so the first three tell you whether
  * the thing is on at all, which is the question that brings people here.
  */
@@ -229,6 +273,12 @@ export function liveLine(attempt: Attempt): string {
  * heading underline, which would turn the route into a heading instead.
  */
 export const REPLY_SEPARATOR = '\n\n---\n\n'
+
+/**
+ * What sits between the reply's last text and the footer. A blank line, so
+ * the fence opens a block of its own instead of joining the last paragraph.
+ */
+export const FOOTER_SEPARATOR = '\n\n'
 
 /** The reply to `/jev quiet` and `/jev loud`. */
 export function announceReply(announce: boolean): string {

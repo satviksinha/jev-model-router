@@ -11,6 +11,7 @@ import {
   type Status,
   addUsage,
   cacheRatio,
+  usageFooter,
   type Attempt,
   type Usage,
 } from '../hooks/status.ts'
@@ -268,5 +269,69 @@ describe('usage: what actually answered', () => {
     const a = routed()
     addUsage(a, usage({ model: 'claude-fable-5-1-20260901-preview', cache_read_input_tokens: 1_900_000 }))
     for (const line of statusReport({ ...base, attempts: [a] }).split('\n')) assert.ok(line.length < 100, line)
+  })
+})
+
+describe('usage footer', () => {
+  const usage = (over: Partial<Usage> = {}): Usage => ({
+    model: 'claude-fable-5-1',
+    input_tokens: 3_000,
+    output_tokens: 900,
+    cache_read_input_tokens: 117_000,
+    cache_creation_input_tokens: 10_000,
+    ...over,
+  })
+  const withUsage = (a: Attempt, u = usage()) => {
+    addUsage(a, u)
+    return a
+  }
+  const routed = (): Attempt => ({ prompt: 'plan it', ms: 641, decision })
+
+  test('a turn with no usage has no footer', () => {
+    assert.equal(usageFooter(routed()), null)
+  })
+
+  test('it is a fenced block, or markdown eats the indent and joins the lines', () => {
+    const lines = usageFooter(withUsage(routed()))!.split('\n')
+    assert.equal(lines[0], '```')
+    assert.equal(lines.at(-1), '```')
+    assert.match(lines[1]!, /^─+$/)
+  })
+
+  test('the jev line is what was asked for', () => {
+    const footer = usageFooter(withUsage(routed()))!
+    assert.match(footer, /jev {2}fable·xhigh · 97% · 641ms/)
+  })
+
+  test('the api line is what answered, with the cost', () => {
+    const footer = usageFooter(withUsage(routed()))!
+    assert.match(footer, /api {2}claude-fable-5-1 ✓ · cache 90% · 130k in · 1k out/)
+  })
+
+  test('a mismatch names both, which is the one case worth looking at', () => {
+    const footer = usageFooter(withUsage(routed(), usage({ model: 'claude-opus-5' })))!
+    assert.match(footer, /api {2}claude-opus-5 ≠ claude-fable-5-1/)
+  })
+
+  test('a dated id is still the model that was asked for', () => {
+    const footer = usageFooter(withUsage(routed(), usage({ model: 'claude-fable-5-1-20260901' })))!
+    assert.match(footer, /claude-fable-5-1-20260901 ✓/)
+  })
+
+  test('an unrouted turn reports what answered, with nothing to compare', () => {
+    const a: Attempt = { prompt: 'x', ms: 0, skipped: 'timed out after 1500ms' }
+    const footer = usageFooter(withUsage(a, usage({ model: 'claude-opus-5' })))!
+    assert.match(footer, /jev {2}unrouted — timed out after 1500ms/)
+    assert.match(footer, /api {2}claude-opus-5 · cache 90%/)
+    assert.doesNotMatch(footer, /[✓≠]/)
+  })
+
+  test('the rule spans the widest line, and nothing wraps', () => {
+    const footer = usageFooter(withUsage(routed(), usage({ cache_read_input_tokens: 1_900_000 })))!
+    const lines = footer.split('\n')
+    const rule = lines[1]!
+    const widest = Math.max(...lines.slice(2, -1).map(l => [...l].length))
+    assert.equal([...rule].length, widest)
+    for (const line of lines) assert.ok([...line].length < 100, line)
   })
 })

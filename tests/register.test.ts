@@ -181,4 +181,50 @@ describe('register: the route in the reply', () => {
     const chunks = await collect(hooks.get('turn.step')!($, { turnId: 'ghost', index: 0 }, () => answeredBy('claude-opus-5')))
     assert.equal(chunks.length, 2)
   })
+
+  test('the footer closes a finished turn, after the reply text', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't9' }, async (e: unknown) => e)
+    const chunks = await collect(hooks.get('turn.step')!($, { turnId: 't9', index: 0 }, () => answeredBy('claude-opus-5')))
+
+    const texts = chunks.filter(c => c.kind === 'text')
+    const footer = texts.at(-1)!.text
+    assert.match(footer, /```\n─+\njev {2}opus·high/)
+    assert.match(footer, /api {2}claude-opus-5 ✓/)
+    assert.equal(chunks.at(-1)!.kind, 'stop', 'the footer goes before the stop chunk')
+    assert.equal(texts.at(-1)!.ref, undefined, 'a chunk we made carries no engine handle')
+  })
+
+  test('a step that only called a tool gets no footer, since the turn goes on', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't10' }, async (e: unknown) => e)
+    const mid = await collect(hooks.get('turn.step')!($, { turnId: 't10', index: 0 }, () => answeredBy('claude-opus-5', 'tool_use')))
+    assert.doesNotMatch(mid.filter(c => c.kind === 'text').map(c => c.text).join(''), /jev {2}opus/)
+
+    const last = await collect(hooks.get('turn.step')!($, { turnId: 't10', index: 1 }, () => answeredBy('claude-opus-5', 'end_turn')))
+    assert.match(last.filter(c => c.kind === 'text').at(-1)!.text, /jev {2}opus·high/)
+  })
+
+  test('the footer sums the whole turn, not just its last step', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't11' }, async (e: unknown) => e)
+    await collect(hooks.get('turn.step')!($, { turnId: 't11', index: 0 }, () => answeredBy('claude-opus-5', 'tool_use', 1000)))
+    const last = await collect(hooks.get('turn.step')!($, { turnId: 't11', index: 1 }, () => answeredBy('claude-opus-5', 'end_turn', 3000)))
+    assert.match(last.filter(c => c.kind === 'text').at(-1)!.text, /22k in/)
+  })
+
+  test('/jev quiet drops the footer with the line', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('command.run:{"command":"jev"}')!($, { args: 'quiet' })
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't12' }, async (e: unknown) => e)
+    const chunks = await collect(hooks.get('turn.step')!($, { turnId: 't12', index: 0 }, () => answeredBy('claude-opus-5')))
+    assert.equal(chunks.filter(c => c.kind === 'text').map(c => c.text).join(''), 'reply')
+  })
+
+  test('a turn whose response carried no usage ends without a footer', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't13' }, async (e: unknown) => e)
+    const chunks = await collect(hooks.get('turn.step')!($, { turnId: 't13', index: 0 }, () => modelSays('reply')))
+    assert.doesNotMatch(chunks.filter(c => c.kind === 'text').map(c => c.text).join(''), /jev {2}opus/)
+  })
 })
