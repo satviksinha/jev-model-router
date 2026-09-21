@@ -18,12 +18,8 @@
  * under plain `node` in tests, with no engine and no network.
  */
 
-import {
-  EFFORT_CRITERIA,
-  TIER_CRITERIA,
-  type Tier,
-} from './policy.ts'
-import type { ProviderResult } from './provider.ts'
+import { EFFORT_CRITERIA, TIER_CRITERIA, type Tier } from "./policy.ts";
+import type { ProviderResult } from "./provider.ts";
 
 /**
  * Measured against the live gateway on 2026-09-20: ten prompts ran 402ms to
@@ -31,20 +27,20 @@ import type { ProviderResult } from './provider.ts'
  * real headroom while still capping what a turn waits before giving up.
  * `JEV_ROUTER_TIMEOUT_MS` overrides it.
  */
-export const DEFAULT_TIMEOUT_MS = 1500
+export const DEFAULT_TIMEOUT_MS = 1500;
 
 /** A timeout from the environment, or the default when it is unusable. */
 export function timeoutOf(raw: string | undefined): number {
-  const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TIMEOUT_MS
-  return parsed
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TIMEOUT_MS;
+  return parsed;
 }
 
 export type HttpResponseLike = {
-  ok: boolean
-  status: number
-  text: string
-}
+  ok: boolean;
+  status: number;
+  text: string;
+};
 
 /**
  * What one attempt at Jev came to. A failure carries its reason so the
@@ -52,24 +48,24 @@ export type HttpResponseLike = {
  */
 export type JevResult =
   | { ok: true; answers: unknown; ms: number }
-  | { ok: false; reason: string; ms: number }
+  | { ok: false; reason: string; ms: number };
 
 export type AskArgs = {
-  fetch: (url: string, init?: HttpInitLike) => Promise<HttpResponseLike>
-  sleep: (ms: number) => Promise<unknown>
-  provider: ProviderResult
-  state: string
-  offered: readonly Tier[]
-  timeoutMs?: number
+  fetch: (url: string, init?: HttpInitLike) => Promise<HttpResponseLike>;
+  sleep: (ms: number) => Promise<unknown>;
+  provider: ProviderResult;
+  state: string;
+  offered: readonly Tier[];
+  timeoutMs?: number;
   /** Injected so tests can measure without a real clock. */
-  now?: () => number
-}
+  now?: () => number;
+};
 
 export type HttpInitLike = {
-  method?: string
-  headers?: Record<string, string>
-  body?: string
-}
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+};
 
 /**
  * The request body for one routing decision: two questions Jev answers in
@@ -78,26 +74,26 @@ export type HttpInitLike = {
  * The model field is added by askJev depending on which provider is used.
  */
 export function requestBodyOf(state: string, offered: readonly Tier[]) {
-  const criteria: Record<string, string> = {}
-  for (const tier of offered) criteria[tier] = TIER_CRITERIA[tier]
+  const criteria: Record<string, string> = {};
+  for (const tier of offered) criteria[tier] = TIER_CRITERIA[tier];
 
   return {
     state,
     questions: {
       tier: {
-        type: 'choice',
+        type: "choice",
         instructions:
-          'A developer typed this request to a coding agent. Which model tier ' +
-          'should answer it?',
+          "A developer typed this request to a coding agent. Which model tier " +
+          "should answer it?",
         criteria,
       },
       effort: {
-        type: 'score',
-        instructions: 'How much thinking does answering this request take?',
+        type: "score",
+        instructions: "How much thinking does answering this request take?",
         criteria: [...EFFORT_CRITERIA],
       },
     },
-  }
+  };
 }
 
 /**
@@ -108,16 +104,24 @@ export function requestBodyOf(state: string, offered: readonly Tier[]) {
  * the router ran at all.
  */
 export async function askJev(args: AskArgs): Promise<JevResult> {
-  const { fetch, sleep, provider, state, offered, now = () => Date.now() } = args
-  const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  const started = now()
-  const since = () => now() - started
+  const {
+    fetch,
+    sleep,
+    provider,
+    state,
+    offered,
+    now = () => Date.now(),
+  } = args;
+  const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const started = now();
+  const since = () => now() - started;
 
-  if (!provider.ok) return { ok: false, reason: provider.reason, ms: 0 }
-  if (state.trim() === '') return { ok: false, reason: 'empty prompt', ms: 0 }
-  if (offered.length === 0) return { ok: false, reason: 'no tiers offered', ms: 0 }
+  if (!provider.ok) return { ok: false, reason: provider.reason, ms: 0 };
+  if (state.trim() === "") return { ok: false, reason: "empty prompt", ms: 0 };
+  if (offered.length === 0)
+    return { ok: false, reason: "no tiers offered", ms: 0 };
 
-  const TIMED_OUT = Symbol('timed-out')
+  const TIMED_OUT = Symbol("timed-out");
 
   // Build the request body. For TypeSafe direct, we use the model name directly.
   // For the gateway, we still ask for it but the gateway ignores our model field
@@ -125,60 +129,64 @@ export async function askJev(args: AskArgs): Promise<JevResult> {
   const body = {
     ...requestBodyOf(state, offered),
     model: provider.model,
-  }
+  };
 
   const call = fetch(provider.endpoint, {
-    method: 'POST',
+    method: "POST",
     headers: {
       authorization: `Bearer ${provider.apiKey}`,
-      'content-type': 'application/json',
+      "content-type": "application/json",
     },
     body: JSON.stringify(body),
-  })
+  });
 
-  let response: HttpResponseLike
+  let response: HttpResponseLike;
   try {
     const raced = await Promise.race([
       call,
       sleep(timeoutMs).then(() => TIMED_OUT),
-    ])
+    ]);
     if (raced === TIMED_OUT) {
-      return { ok: false, reason: `timed out after ${timeoutMs}ms`, ms: since() }
+      return {
+        ok: false,
+        reason: `timed out after ${timeoutMs}ms`,
+        ms: since(),
+      };
     }
-    response = raced as HttpResponseLike
+    response = raced as HttpResponseLike;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
-    return { ok: false, reason: `request failed: ${detail}`, ms: since() }
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, reason: `request failed: ${detail}`, ms: since() };
   }
 
-  if (!response) return { ok: false, reason: 'no response', ms: since() }
+  if (!response) return { ok: false, reason: "no response", ms: since() };
 
   if (!response.ok) {
     return {
       ok: false,
       reason: `gateway said HTTP ${response.status}${gatewayNoteOf(response)}`,
       ms: since(),
-    }
+    };
   }
 
   try {
-    const parsed = JSON.parse(response.text) as { answers?: unknown }
-    if (typeof parsed !== 'object' || parsed === null || !parsed.answers) {
-      return { ok: false, reason: 'response carried no answers', ms: since() }
+    const parsed = JSON.parse(response.text) as { answers?: unknown };
+    if (typeof parsed !== "object" || parsed === null || !parsed.answers) {
+      return { ok: false, reason: "response carried no answers", ms: since() };
     }
-    return { ok: true, answers: parsed.answers, ms: since() }
+    return { ok: true, answers: parsed.answers, ms: since() };
   } catch {
-    return { ok: false, reason: 'response was not JSON', ms: since() }
+    return { ok: false, reason: "response was not JSON", ms: since() };
   }
 }
 
 /** The gateway's own error type, when it sent one, for the status line. */
 function gatewayNoteOf(response: HttpResponseLike): string {
   try {
-    const body = JSON.parse(response.text) as { error?: { type?: string } }
-    const type = body?.error?.type
-    return typeof type === 'string' ? ` (${type})` : ''
+    const body = JSON.parse(response.text) as { error?: { type?: string } };
+    const type = body?.error?.type;
+    return typeof type === "string" ? ` (${type})` : "";
   } catch {
-    return ''
+    return "";
   }
 }

@@ -97,6 +97,7 @@ jev-router
   surface   desktop
   provider  typesafe · TYPESAFE_API_KEY is set
   budget    1500ms
+  sticky    on, switch needs 75%
   tiers     haiku, sonnet, opus, fable
 
   Recent turns, newest first:
@@ -253,6 +254,41 @@ model, which this mod does not touch — the rewrite happens per request, in
   giving up and running unrouted. The default is 1500ms. Ten live calls on
   2026-09-20 ran 402ms to 839ms, so an earlier 800ms default was failing open
   on the slowest of them.
+- `JEV_ROUTER_STICKY=1` makes a tier switch clear a confidence bar before the
+  model moves. Off by default. See below.
+- `JEV_ROUTER_STICKY_CONFIDENCE=0.6` sets that bar. The default is 0.75. A
+  value above 1 is read as a percentage, so `75` and `0.75` mean the same.
+
+## Holding a shaky switch
+
+The prompt cache is per model. A session cached under fable is cold for
+haiku, so the turn that switches pays full input tokens and a slower first
+token. A router that flips tier on a 51% hunch can pick the cheaper model
+every time and still cost more than staying put.
+
+With `JEV_ROUTER_STICKY=1`, a turn that names a different tier than the last
+one has to clear the bar to move. Below it, the turn runs on the tier already
+loaded, and says so:
+
+```
+> ✳️ `fable` · low · 61% · held:haiku · 512ms
+```
+
+Jev wanted haiku, was 61% sure, and the bar is 75%, so the turn stayed on
+fable. The same `held:haiku` appears in the footer and in `/jev`, because a
+hold nobody can see is indistinguishable from a router that is not running.
+
+Only the model is held. The effort Jev asked for is applied either way, since
+effort does not change the model and so costs no cache: a held turn still
+thinks harder or less hard than the one before it.
+
+What the next turn holds to is the tier actually running, not the one Jev
+named. Three shaky haiku calls in a row will not creep the session onto haiku
+one turn at a time. An unrouted turn changes nothing, since nothing ran.
+
+0.75 is a starting point, not a measured optimum. `npm run try-prompts`
+prints Jev's confidence across a set of prompts, which is the input to
+picking a better one.
 
 ## Checking and tuning
 

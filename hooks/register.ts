@@ -1,9 +1,16 @@
-import type { On } from 'claude-code'
+import type { On } from "claude-code";
 
-import { askJev, timeoutOf } from './jev.ts'
-import { labelOf, withLabel } from './label.ts'
-import { excludedTiers, offeredTiers, type Decision } from './policy.ts'
-import { providerOf } from './provider.ts'
+import { askJev, timeoutOf } from "./jev.ts";
+import { labelOf, withLabel } from "./label.ts";
+import {
+  excludedTiers,
+  offeredTiers,
+  stickyDecision,
+  stickyOf,
+  thresholdOf,
+  type Decision,
+} from "./policy.ts";
+import { providerOf } from "./provider.ts";
 import {
   addUsage,
   announceReply,
@@ -17,16 +24,27 @@ import {
   usageFooter,
   type AgentTag,
   type Attempt,
-} from './status.ts'
+} from "./status.ts";
 
 /** Turns kept in the decision cache before the oldest are dropped. */
-const CACHE_LIMIT = 32
+const CACHE_LIMIT = 32;
 
 /**
  * Stop reasons that mean the turn continues: the engine will step again, so
  * the footer would land in the middle of a reply. Every other reason ends it.
  */
-const MID_TURN: ReadonlySet<string> = new Set(['tool_use', 'pause_turn'])
+const MID_TURN: ReadonlySet<string> = new Set(["tool_use", "pause_turn"]);
+
+/**
+ * The confidence a switch must clear this turn, or null when the flag is off.
+ * Read per turn, like the other settings, so retuning needs no restart.
+ */
+async function stickyThreshold($: {
+  env: { get: (k: string) => Promise<string | undefined> };
+}): Promise<number | null> {
+  if (!stickyOf(await $.env.get("JEV_ROUTER_STICKY"))) return null;
+  return thresholdOf(await $.env.get("JEV_ROUTER_STICKY_CONFIDENCE"));
+}
 
 /**
  * Names the subagent a step runs in, from the session's agent list. A row may
@@ -34,12 +52,18 @@ const MID_TURN: ReadonlySet<string> = new Set(['tool_use', 'pause_turn'])
  * which still says "not the main loop", the part that matters.
  */
 async function agentTagOf(
-  $: { agent: { list: () => Promise<readonly { id: string; type: string; description: string }[]> } },
+  $: {
+    agent: {
+      list: () => Promise<
+        readonly { id: string; type: string; description: string }[]
+      >;
+    };
+  },
   agentId: string,
 ): Promise<AgentTag> {
-  const rows = await $.agent.list().catch(() => [])
-  const row = rows.find(r => r.id === agentId)
-  return row ? { type: row.type, label: row.description } : { label: agentId }
+  const rows = await $.agent.list().catch(() => []);
+  const row = rows.find((r) => r.id === agentId);
+  return row ? { type: row.type, label: row.description } : { label: agentId };
 }
 
 /**
@@ -58,135 +82,144 @@ async function agentTagOf(
  * @param on the engine's registrar
  */
 export function register(on: On) {
-  const decisions = new Map<string, Decision>()
+  const decisions = new Map<string, Decision>();
   /**
    * Turns whose reply has yet to open with its route line. The line itself is
    * built at the first text chunk, not here: by then the step has said which
    * loop the turn runs in, which the line names.
    */
-  const pending = new Set<string>()
-  const attempts: Attempt[] = []
+  const pending = new Set<string>();
+  const attempts: Attempt[] = [];
   /**
    * turnId → its attempt, so each step's `stop` chunk can add what the API
    * reported to the right turn. The same objects as in `attempts`.
    */
-  const byTurn = new Map<string, Attempt>()
-  let latest: Decision | null = null
-  let enabled = true
-  let announce = true
-  let surface: string | null = null
+  const byTurn = new Map<string, Attempt>();
+  let latest: Decision | null = null;
+  /** The tier the last routed turn ran on; what a shaky switch is held to. */
+  let running: Decision | null = null;
+  let enabled = true;
+  let announce = true;
+  let surface: string | null = null;
 
   const trim = (map: Map<string, unknown>) => {
     while (map.size > CACHE_LIMIT) {
-      const oldest = map.keys().next()
-      if (oldest.done) break
-      map.delete(oldest.value)
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
     }
-  }
+  };
 
   const trimSet = (set: Set<string>) => {
     while (set.size > CACHE_LIMIT) {
-      const oldest = set.values().next()
-      if (oldest.done) break
-      set.delete(oldest.value)
+      const oldest = set.values().next();
+      if (oldest.done) break;
+      set.delete(oldest.value);
     }
-  }
+  };
 
   const record = (attempt: Attempt) => {
-    attempts.unshift(attempt)
-    attempts.length = Math.min(attempts.length, HISTORY_LIMIT)
-  }
+    attempts.unshift(attempt);
+    attempts.length = Math.min(attempts.length, HISTORY_LIMIT);
+  };
 
-  on('session.start', async ($, e, next) => {
+  on("session.start", async ($, e, next) => {
     await $.command.register({
-      name: 'jev',
-      description: 'Jev routing: status, or `on` / `off`.',
-    })
-    surface = await $.session.surface()
-    return next(e)
-  })
+      name: "jev",
+      description: "Jev routing: status, or `on` / `off`.",
+    });
+    surface = await $.session.surface();
+    return next(e);
+  });
 
-  on('command.run', { command: 'jev' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
+  on("command.run", { command: "jev" }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase();
 
-    if (arg === 'on' || arg === 'off') {
-      enabled = arg === 'on'
-      if (!enabled) latest = null
-      return { text: toggleReply(enabled) }
+    if (arg === "on" || arg === "off") {
+      enabled = arg === "on";
+      if (!enabled) latest = null;
+      return { text: toggleReply(enabled) };
     }
 
-    if (arg === 'quiet' || arg === 'loud') {
-      announce = arg === 'loud'
-      return { text: announceReply(announce) }
+    if (arg === "quiet" || arg === "loud") {
+      announce = arg === "loud";
+      return { text: announceReply(announce) };
     }
 
-    const excluded = excludedTiers(await $.env.get('JEV_ROUTER_EXCLUDE'))
+    const excluded = excludedTiers(await $.env.get("JEV_ROUTER_EXCLUDE"));
     const provider = providerOf({
-      TYPESAFE_API_KEY: await $.env.get('TYPESAFE_API_KEY'),
-      AI_GATEWAY_API_KEY: await $.env.get('AI_GATEWAY_API_KEY'),
-      JEV_ROUTER_PROVIDER: await $.env.get('JEV_ROUTER_PROVIDER'),
-      TYPESAFE_BASE_URL: await $.env.get('TYPESAFE_BASE_URL'),
-    })
+      TYPESAFE_API_KEY: await $.env.get("TYPESAFE_API_KEY"),
+      AI_GATEWAY_API_KEY: await $.env.get("AI_GATEWAY_API_KEY"),
+      JEV_ROUTER_PROVIDER: await $.env.get("JEV_ROUTER_PROVIDER"),
+      TYPESAFE_BASE_URL: await $.env.get("TYPESAFE_BASE_URL"),
+    });
     return {
       text: statusReport({
         enabled,
         surface: surface ?? (await $.session.surface()),
         provider,
-        timeoutMs: timeoutOf(await $.env.get('JEV_ROUTER_TIMEOUT_MS')),
+        timeoutMs: timeoutOf(await $.env.get("JEV_ROUTER_TIMEOUT_MS")),
+        sticky: await stickyThreshold($),
         offered: offeredTiers(excluded),
         excluded: [...excluded],
         announce,
         attempts,
       }),
-    }
-  })
+    };
+  });
 
-  on('turn.start', async ($, e, next) => {
-    if (!enabled) return next(e)
+  on("turn.start", async ($, e, next) => {
+    if (!enabled) return next(e);
 
     const offered = offeredTiers(
-      excludedTiers(await $.env.get('JEV_ROUTER_EXCLUDE')),
-    )
+      excludedTiers(await $.env.get("JEV_ROUTER_EXCLUDE")),
+    );
 
     const provider = providerOf({
-      TYPESAFE_API_KEY: await $.env.get('TYPESAFE_API_KEY'),
-      AI_GATEWAY_API_KEY: await $.env.get('AI_GATEWAY_API_KEY'),
-      JEV_ROUTER_PROVIDER: await $.env.get('JEV_ROUTER_PROVIDER'),
-      TYPESAFE_BASE_URL: await $.env.get('TYPESAFE_BASE_URL'),
-    })
+      TYPESAFE_API_KEY: await $.env.get("TYPESAFE_API_KEY"),
+      AI_GATEWAY_API_KEY: await $.env.get("AI_GATEWAY_API_KEY"),
+      JEV_ROUTER_PROVIDER: await $.env.get("JEV_ROUTER_PROVIDER"),
+      TYPESAFE_BASE_URL: await $.env.get("TYPESAFE_BASE_URL"),
+    });
 
     const result = await askJev({
       fetch: (url, init) => $.http.fetch(url, init),
-      sleep: ms => $.clock.sleep(ms),
+      sleep: (ms) => $.clock.sleep(ms),
       provider,
       state: e.text,
       offered,
-      timeoutMs: timeoutOf(await $.env.get('JEV_ROUTER_TIMEOUT_MS')),
-    })
+      timeoutMs: timeoutOf(await $.env.get("JEV_ROUTER_TIMEOUT_MS")),
+    });
 
     // One place where the turn's outcome is settled, so the report and the
     // announcement can never disagree about what happened.
-    const attempt = attemptOf(e.text, result, offered)
-    record(attempt)
-    byTurn.set(e.turnId, attempt)
-    trim(byTurn)
+    const attempt = attemptOf(e.text, result, offered, {
+      sticky: await stickyThreshold($),
+      running,
+    });
+    record(attempt);
+    byTurn.set(e.turnId, attempt);
+    trim(byTurn);
 
     // The line goes into the reply's own text, in turn.step below. Render
     // hooks and $.ui.log both drew nothing in the desktop app; the model's
     // text is the one channel that reaches every surface.
     if (announce) {
-      pending.add(e.turnId)
-      trimSet(pending)
+      pending.add(e.turnId);
+      trimSet(pending);
     }
 
-    if ('decision' in attempt) {
-      decisions.set(e.turnId, attempt.decision)
-      trim(decisions)
-      latest = attempt.decision
+    if ("decision" in attempt) {
+      decisions.set(e.turnId, attempt.decision);
+      trim(decisions);
+      latest = attempt.decision;
+      // What the next turn holds to is the tier actually running, which on a
+      // held turn is the previous one, not the one Jev named.
+      running = attempt.decision;
     }
 
-    return next(e)
-  })
+    return next(e);
+  });
 
   // turn.step streams, so it is an async generator. The model rewrite goes
   // down in `e`; the label comes back up in the first text chunk of the turn,
@@ -198,8 +231,8 @@ export function register(on: On) {
   // line at the top of the reply. This is the recorded text too, so the model
   // sees its past replies open with the line; that is the price of a marker
   // that reaches a surface which draws neither render sites nor ui.log.
-  on('turn.step', async function* ($, e, next) {
-    const decision = decisions.get(e.turnId)
+  on("turn.step", async function* ($, e, next) {
+    const decision = decisions.get(e.turnId);
 
     // A subagent's loop gets no turn.start (probed live: its steps arrive
     // with agentId set and nothing in byTurn), so its turn is first seen
@@ -207,40 +240,43 @@ export function register(on: On) {
     // line in its reply would land in the tool result its parent reads. It
     // is recorded, though, with the model that ran it, or /jev would show
     // one prompt and hide the four requests it caused.
-    let attempt = byTurn.get(e.turnId)
+    let attempt = byTurn.get(e.turnId);
     if (attempt === undefined && e.agentId !== undefined) {
-      const agent = await agentTagOf($, e.agentId)
+      const agent = await agentTagOf($, e.agentId);
       attempt = {
         prompt: agent.label,
         ms: 0,
-        skipped: 'subagent runs on the session model',
-        kind: 'agent',
+        skipped: "subagent runs on the session model",
+        kind: "agent",
         agent,
-      }
-      record(attempt)
-      byTurn.set(e.turnId, attempt)
-      trim(byTurn)
+      };
+      record(attempt);
+      byTurn.set(e.turnId, attempt);
+      trim(byTurn);
     }
     const step = decision
       ? next({ ...e, model: decision.model, effort: decision.effort })
-      : next(e)
+      : next(e);
 
     // The block the footer joins, so it lands at the end of the reply's text
     // rather than opening a block of its own.
-    let lastTextIndex = 0
+    let lastTextIndex = 0;
 
     for await (const chunk of step) {
-      if (chunk.kind === 'text') {
-        lastTextIndex = chunk.index
+      if (chunk.kind === "text") {
+        lastTextIndex = chunk.index;
         if (attempt && pending.has(e.turnId)) {
-          pending.delete(e.turnId)
-          yield { ...chunk, text: `${liveLine(attempt)}${REPLY_SEPARATOR}${chunk.text}` }
-          continue
+          pending.delete(e.turnId);
+          yield {
+            ...chunk,
+            text: `${liveLine(attempt)}${REPLY_SEPARATOR}${chunk.text}`,
+          };
+          continue;
         }
       }
 
-      if (chunk.kind === 'stop') {
-        if (attempt && chunk.usage) addUsage(attempt, chunk.usage)
+      if (chunk.kind === "stop") {
+        if (attempt && chunk.usage) addUsage(attempt, chunk.usage);
 
         // The index must be one past the last text block, and this is
         // load-bearing. A chunk yielded at an index the engine already
@@ -257,28 +293,28 @@ export function register(on: On) {
         if (
           attempt &&
           announce &&
-          attempt.kind !== 'agent' &&
-          !MID_TURN.has(chunk.stopReason ?? '')
+          attempt.kind !== "agent" &&
+          !MID_TURN.has(chunk.stopReason ?? "")
         ) {
-          const footer = usageFooter(attempt)
+          const footer = usageFooter(attempt);
           if (footer !== null) {
             yield {
-              kind: 'text' as const,
+              kind: "text" as const,
               index: lastTextIndex + 1,
               text: `${FOOTER_SEPARATOR}${footer}`,
-            }
+            };
           }
         }
       }
 
-      yield chunk
+      yield chunk;
     }
-  })
+  });
 
   // The footer, where a surface draws one. The announcement above is what
   // carries on surfaces that draw no footer, which is most of them.
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const modes = withLabel(e.props.modes, labelOf(latest, enabled))
-    return next({ ...e, props: { ...e.props, modes } })
-  })
+  on("ui.render", { component: "SessionMode" }, async ($, e, next) => {
+    const modes = withLabel(e.props.modes, labelOf(latest, enabled));
+    return next({ ...e, props: { ...e.props, modes } });
+  });
 }
