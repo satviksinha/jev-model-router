@@ -1,7 +1,7 @@
 # jev-router
 
 Picks the model for each turn with [Jev](https://docs.typesafe.ai), TypeSafe's
-decision model, asked through the Vercel AI Gateway.
+decision model. Supports both TypeSafe's direct API and the Vercel AI Gateway.
 
 You type a prompt. Before the turn runs, Jev is asked two questions at once:
 which tier should answer this, and how hard should it think. Every model
@@ -34,35 +34,46 @@ router's behaviour. Nothing else needs to change.
 
 ## Setup
 
-Get an AI Gateway key from your Vercel dashboard and put it in the `env` block
-of `~/.claude/settings.json`:
+### Provider: TypeSafe direct or Vercel AI Gateway
+
+Get either a TypeSafe API key or an AI Gateway key and put it in the `env` block
+of `~/.claude/settings.json`. The router prefers TypeSafe direct when both keys
+are set:
 
 ```json
 {
   "env": {
+    "TYPESAFE_API_KEY": "...",
     "AI_GATEWAY_API_KEY": "...",
     "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1"
   }
 }
 ```
 
-`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is not optional. Without it the mod loads
-and silently does nothing, with no warning.
+**For TypeSafe direct:** Get a key from your [TypeSafe account](https://console.typesafe.ai/keys).
 
-**The gateway needs a card on the account, not just a key.** Run
-`npm run check-gateway` to see where you stand: a balance of 0 means no
-credits have been granted to the scope this key belongs to. A valid key on an
-account with no payment method gets:
+**For the Vercel AI Gateway:** Get a key from your [Vercel dashboard](https://vercel.com/dashboard) and note
+that the gateway **needs a card on the account**, not just a key. A valid key
+on an account with no payment method gets:
 
 ```
 HTTP 403  customer_verification_required
 "AI Gateway requires a valid credit card on file to service requests."
 ```
 
-A personal-scope key needs a card before it serves anything, even on free
-credits. A team-scope key reportedly does not. Because the router fails open,
-this shows up as the mod doing nothing at all rather than as an error, so
-check it first when nothing seems to route.
+A personal-scope gateway key needs a card before it serves anything, even on free
+credits. A team-scope key reportedly does not.
+
+**Forcing a provider:** If both keys are set and you want to use the gateway,
+set `JEV_ROUTER_PROVIDER=gateway`. Similarly, `JEV_ROUTER_PROVIDER=typesafe`
+forces TypeSafe direct.
+
+`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is not optional. Without it the mod loads
+and silently does nothing, with no warning.
+
+Because the router fails open, setup issues show up as the mod doing nothing
+at all rather than as an error. Run `npm run check-jev` when nothing seems to
+route to see which provider is configured and whether it's serving.
 
 Then run Claude Code with the mod:
 
@@ -84,7 +95,7 @@ surface, so this always works:
 jev-router
   routing   on
   surface   desktop
-  gateway   AI_GATEWAY_API_KEY is set
+  provider  typesafe · TYPESAFE_API_KEY is set
   budget    1500ms
   tiers     haiku, sonnet, opus, fable
 
@@ -95,7 +106,7 @@ jev-router
 ```
 
 An unrouted turn says why. That matters because the router fails open, so a
-dead gateway and a missing plugin look identical from the outside.
+dead provider and a missing plugin look identical from the outside.
 
 **The first line of every reply.** The route is written into the reply's
 own text, as the first text chunk streams through `turn.step`:
@@ -141,6 +152,10 @@ model, which this mod does not touch — the rewrite happens per request, in
   explicitly rather than toggling blind.
 - `/jev quiet` and `/jev loud` control the line at the top of each reply.
   Quiet still routes and still records, so `/jev` shows what you missed.
+- `JEV_ROUTER_PROVIDER=typesafe|gateway` forces a specific provider. If both
+  keys are set, the default is TypeSafe direct; use this to force the gateway.
+- `TYPESAFE_BASE_URL=https://api.example.com` overrides the TypeSafe endpoint
+  base (defaults to `https://api.typesafe.ai`). Useful for custom deployments.
 - `JEV_ROUTER_EXCLUDE=fable,haiku` drops those tiers from the question
   entirely, so Jev is never offered them. Excluding all four is ignored.
 - `JEV_ROUTER_TIMEOUT_MS=2500` changes how long a turn waits for Jev before
@@ -151,14 +166,15 @@ model, which this mod does not touch — the rewrite happens per request, in
 ## Checking and tuning
 
 ```
-npm run check-gateway    # is the gateway serving? prints the credit balance
+npm run check-jev        # is the configured provider serving?
 npm run try-prompts      # what tier does Jev give a spread of prompts?
 npm run try-prompts -- "your prompt"
 ```
 
-`try-prompts` is the tuning loop. Edit `TIER_CRITERIA`, run it, and see
-whether the picks moved the way you wanted. Neither script ever prints the
-key.
+`check-jev` detects which provider is configured and runs the appropriate
+diagnostic. For the gateway it checks credits; for TypeSafe direct it makes a
+live call. `try-prompts` is the tuning loop: edit `TIER_CRITERIA`, run it, and
+see whether the picks moved the way you wanted. Neither script ever prints the key.
 
 Measured on 2026-09-20 against the shipped criteria:
 
@@ -186,9 +202,9 @@ this is harmless, but it is why a `haiku·xhigh` label is possible.
 The router fails open at every step, and a turn it cannot decide runs exactly
 as it would without the mod:
 
-- no `AI_GATEWAY_API_KEY`, no request is made at all
-- the gateway takes longer than the timeout (1500ms by default)
-- the gateway refuses the key, errors, or returns a body we cannot read
+- no `TYPESAFE_API_KEY` or `AI_GATEWAY_API_KEY`, no request is made at all
+- the provider takes longer than the timeout (1500ms by default)
+- the provider refuses the key, errors, or returns a body we cannot read
 - Jev names a tier that was not offered
 
 The only cost of a failure is the latency spent waiting, capped at the timeout.
@@ -206,17 +222,20 @@ jev → unrouted (gateway said HTTP 403 (customer_verification_required))
 
 ```
 hooks/register.ts   the five hooks, the per-turn cache, the turn history
-hooks/jev.ts        the gateway call: request shape, timeout, named failures
+hooks/jev.ts        the request shape, timeout, named failures
+hooks/provider.ts   which backend (TypeSafe direct or gateway) to use
 hooks/policy.ts     the tiers, the criteria, answers → model and effort
 hooks/label.ts      decision → footer string
 hooks/status.ts     the per-turn line and what /jev prints
 tests/              node:test suites; register.test.ts drives the real hooks
                     with a fake engine and asserts the stream transform
-scripts/            check-gateway and try-prompts, for setup and tuning
+scripts/            check-jev and try-prompts, for setup and tuning
 ```
 
 `jev.ts` takes `fetch` and `sleep` as arguments rather than importing them, so
-the tests run with no engine and no network.
+the tests run with no engine and no network. `provider.ts` is pure: it takes
+environment variables and returns which provider to use, with all credentials
+and endpoints already resolved.
 
 ## Working on it
 
@@ -234,14 +253,17 @@ be an `async function*` because it streams.
 There is no `claude plugin test` in Claude Code 2.1.275, so the engine-level
 test kit described in the upstream `mods/README.md` is not available yet.
 
-## Notes on the gateway
+## Backends
 
-The endpoint is `POST https://ai-gateway.vercel.sh/v1/evaluate` with the key as
-a bearer token, and the body is `{ model, state, questions }`.
+Both backends speak the same `choice` and `score` question types and the same
+`answers` response shape, so the request/response handling is identical.
 
-Two things differ from TypeSafe's own API:
+**TypeSafe direct** endpoint: `POST https://api.typesafe.ai/v1/systemone`.
+Bearer auth, body is `{ model: "jev-latest", state, questions }`. Probabilities
+and confidences come back rounded to four decimal places. Supports all three
+question types: `choice`, `score`, and `noul`.
 
-- Question types are `choice`, `score` and `boolean`. The gateway rejects
-  TypeSafe's native `noul` outright.
-- Probabilities and confidences come back rounded to two decimal places.
-  TypeSafe direct gives four.
+**Vercel AI Gateway** endpoint: `POST https://ai-gateway.vercel.sh/v1/evaluate`.
+Bearer auth, body is `{ model, state, questions }` (the gateway ignores the
+model field). Probabilities and confidences come back rounded to two decimal
+places. Only supports `choice` and `score` — the gateway rejects `noul` outright.

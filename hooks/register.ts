@@ -3,6 +3,7 @@ import type { On } from 'claude-code'
 import { askJev, timeoutOf } from './jev.ts'
 import { labelOf, withLabel } from './label.ts'
 import { excludedTiers, offeredTiers, type Decision } from './policy.ts'
+import { providerOf } from './provider.ts'
 import {
   announceReply,
   attemptOf,
@@ -79,11 +80,17 @@ export function register(on: On) {
     }
 
     const excluded = excludedTiers(await $.env.get('JEV_ROUTER_EXCLUDE'))
+    const provider = providerOf({
+      TYPESAFE_API_KEY: await $.env.get('TYPESAFE_API_KEY'),
+      AI_GATEWAY_API_KEY: await $.env.get('AI_GATEWAY_API_KEY'),
+      JEV_ROUTER_PROVIDER: await $.env.get('JEV_ROUTER_PROVIDER'),
+      TYPESAFE_BASE_URL: await $.env.get('TYPESAFE_BASE_URL'),
+    })
     return {
       text: statusReport({
         enabled,
         surface: surface ?? (await $.session.surface()),
-        hasKey: Boolean(await $.env.get('AI_GATEWAY_API_KEY')),
+        provider,
         timeoutMs: timeoutOf(await $.env.get('JEV_ROUTER_TIMEOUT_MS')),
         offered: offeredTiers(excluded),
         excluded: [...excluded],
@@ -100,10 +107,17 @@ export function register(on: On) {
       excludedTiers(await $.env.get('JEV_ROUTER_EXCLUDE')),
     )
 
+    const provider = providerOf({
+      TYPESAFE_API_KEY: await $.env.get('TYPESAFE_API_KEY'),
+      AI_GATEWAY_API_KEY: await $.env.get('AI_GATEWAY_API_KEY'),
+      JEV_ROUTER_PROVIDER: await $.env.get('JEV_ROUTER_PROVIDER'),
+      TYPESAFE_BASE_URL: await $.env.get('TYPESAFE_BASE_URL'),
+    })
+
     const result = await askJev({
       fetch: (url, init) => $.http.fetch(url, init),
       sleep: ms => $.clock.sleep(ms),
-      apiKey: await $.env.get('AI_GATEWAY_API_KEY'),
+      provider,
       state: e.text,
       offered,
       timeoutMs: timeoutOf(await $.env.get('JEV_ROUTER_TIMEOUT_MS')),

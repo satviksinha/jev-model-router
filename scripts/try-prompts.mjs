@@ -12,13 +12,22 @@ import { homedir } from 'node:os'
 
 import { askJev } from '../hooks/jev.ts'
 import { decisionOf, TIERS } from '../hooks/policy.ts'
+import { providerOf } from '../hooks/provider.ts'
 
-const key = JSON.parse(
+const settings = JSON.parse(
   readFileSync(`${homedir()}/.claude/settings.json`, 'utf8'),
-)?.env?.AI_GATEWAY_API_KEY
+)
+const env = settings?.env ?? {}
 
-if (!key) {
-  console.error('No AI_GATEWAY_API_KEY in ~/.claude/settings.json.')
+const provider = providerOf({
+  TYPESAFE_API_KEY: env.TYPESAFE_API_KEY,
+  AI_GATEWAY_API_KEY: env.AI_GATEWAY_API_KEY,
+  JEV_ROUTER_PROVIDER: env.JEV_ROUTER_PROVIDER,
+  TYPESAFE_BASE_URL: env.TYPESAFE_BASE_URL,
+})
+
+if (!provider.ok) {
+  console.error(`Provider error: ${provider.reason}`)
   process.exit(1)
 }
 
@@ -43,18 +52,19 @@ console.log('  ──  ──────  ──────  ────  ─
 
 for (const prompt of prompts) {
   const started = Date.now()
-  const answers = await askJev({
+  const result = await askJev({
     fetch: async (url, init) => {
       const r = await fetch(url, init)
       return { ok: r.ok, status: r.status, text: await r.text() }
     },
     sleep,
-    apiKey: key,
+    provider,
     state: prompt,
     offered: TIERS,
     timeoutMs: 10_000,
   })
   const ms = Date.now() - started
+  const answers = result.ok ? result.answers : null
   const d = decisionOf(answers, TIERS)
 
   const short = prompt.length > 62 ? `${prompt.slice(0, 59)}...` : prompt

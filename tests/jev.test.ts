@@ -4,8 +4,6 @@ import { describe, test } from 'node:test'
 import {
   askJev,
   DEFAULT_TIMEOUT_MS,
-  ENDPOINT,
-  JEV_MODEL,
   requestBodyOf,
   timeoutOf,
   type HttpInitLike,
@@ -13,6 +11,7 @@ import {
 } from '../hooks/jev.ts'
 import { labelOf, withLabel } from '../hooks/label.ts'
 import { TIERS } from '../hooks/policy.ts'
+import type { ProviderResult } from '../hooks/provider.ts'
 
 const never = () => new Promise<never>(() => {})
 const immediately = async () => undefined
@@ -23,9 +22,30 @@ const answered = (body: unknown): HttpResponseLike => ({
   text: JSON.stringify(body),
 })
 
+const gatewayProvider: ProviderResult = {
+  ok: true,
+  name: 'gateway',
+  endpoint: 'https://ai-gateway.vercel.sh/v1/evaluate',
+  model: 'typesafe-ai/jev',
+  apiKey: 'gw-key',
+}
+
+const typeafeProvider: ProviderResult = {
+  ok: true,
+  name: 'typesafe',
+  endpoint: 'https://api.typesafe.ai/v1/systemone',
+  model: 'jev-latest',
+  apiKey: 'ts-key',
+}
+
+const noKeyProvider: ProviderResult = {
+  ok: false,
+  reason: 'no TYPESAFE_API_KEY or AI_GATEWAY_API_KEY',
+}
+
 const base = {
   sleep: never,
-  apiKey: 'k',
+  provider: gatewayProvider,
   state: 'plan the migration',
   offered: TIERS,
 }
@@ -33,7 +53,6 @@ const base = {
 describe('jev', () => {
   test('the request names Jev and asks both questions at once', () => {
     const body = requestBodyOf('rename a variable', TIERS)
-    assert.equal(body.model, JEV_MODEL)
     assert.equal(body.state, 'rename a variable')
     assert.deepEqual(Object.keys(body.questions), ['tier', 'effort'])
     assert.equal(body.questions.tier.type, 'choice')
@@ -74,16 +93,16 @@ describe('jev', () => {
         return answered({ answers: {} })
       },
     })
-    assert.equal(seen.url, ENDPOINT)
+    assert.equal(seen.url, 'https://ai-gateway.vercel.sh/v1/evaluate')
     assert.equal(seen.init?.method, 'POST')
-    assert.equal(seen.init?.headers?.authorization, 'Bearer k')
+    assert.equal(seen.init?.headers?.authorization, 'Bearer gw-key')
   })
 
   test('no key means no request at all', async () => {
     let called = false
     const got = await askJev({
       ...base,
-      apiKey: undefined,
+      provider: noKeyProvider,
       fetch: async () => {
         called = true
         return answered({ answers: {} })
@@ -91,7 +110,7 @@ describe('jev', () => {
     })
     assert.equal(got.ok, false)
     assert.equal(called, false)
-    assert.match(got.ok === false ? got.reason : '', /AI_GATEWAY_API_KEY/)
+    assert.match(got.ok === false ? got.reason : '', /no TYPESAFE_API_KEY or AI_GATEWAY_API_KEY/)
   })
 
   test('a slow gateway loses the race and the turn is left alone', async () => {

@@ -7,7 +7,7 @@ import { register } from '../hooks/register.ts'
  * Drives the real `register` with a fake engine: captures the hooks it
  * registers, then runs turn.start and turn.step the way the engine would.
  */
-function load(env: Record<string, string> = { AI_GATEWAY_API_KEY: 'k' }) {
+function load(env: Record<string, string> = { AI_GATEWAY_API_KEY: 'gw-key' }) {
   const hooks = new Map<string, Function>()
   const on = (name: string, a: unknown, b?: unknown) => {
     const key = typeof a === 'function' ? name : `${name}:${JSON.stringify(a)}`
@@ -101,7 +101,7 @@ describe('register: the route in the reply', () => {
     )
     assert.equal(
       chunks.find(c => c.kind === 'text')!.text,
-      '> ⚠️ `unrouted` · no AI_GATEWAY_API_KEY\n\n---\n\nreply',
+      '> ⚠️ `unrouted` · no TYPESAFE_API_KEY or AI_GATEWAY_API_KEY\n\n---\n\nreply',
     )
   })
 

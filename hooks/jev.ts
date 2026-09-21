@@ -1,10 +1,18 @@
 /**
- * Asking Jev, TypeSafe's decision model, through the Vercel AI Gateway.
+ * Asking Jev, TypeSafe's decision model, through either the Vercel AI
+ * Gateway or TypeSafe's direct API.
  *
- * The gateway speaks its own vocabulary at `/v1/evaluate`: question types are
- * `choice`, `score` and `boolean`, never TypeSafe's native `noul`, which it
- * rejects outright. Probabilities and confidences come back rounded to two
- * decimal places; TypeSafe direct gives four.
+ * The gateway (POST /v1/evaluate) speaks its own vocabulary: question types
+ * are `choice`, `score` and `boolean`, never TypeSafe's native `noul`, which
+ * it rejects outright. Probabilities and confidences come back rounded to two
+ * decimal places.
+ *
+ * TypeSafe direct (POST /v1/systemone) supports all three question types
+ * (choice, score, noul) and returns probabilities rounded to four decimal
+ * places.
+ *
+ * Both support the same `choice` and `score` question types and the same
+ * `answers` response shape, so the request/response handling is identical.
  *
  * `fetch` and `sleep` are arguments rather than imports so this file runs
  * under plain `node` in tests, with no engine and no network.
@@ -15,10 +23,7 @@ import {
   TIER_CRITERIA,
   type Tier,
 } from './policy.ts'
-
-export const ENDPOINT = 'https://ai-gateway.vercel.sh/v1/evaluate'
-
-export const JEV_MODEL = 'typesafe-ai/jev'
+import type { ProviderResult } from './provider.ts'
 
 /**
  * Measured against the live gateway on 2026-09-20: ten prompts ran 402ms to
@@ -52,7 +57,7 @@ export type JevResult =
 export type AskArgs = {
   fetch: (url: string, init?: HttpInitLike) => Promise<HttpResponseLike>
   sleep: (ms: number) => Promise<unknown>
-  apiKey: string | undefined
+  provider: ProviderResult
   state: string
   offered: readonly Tier[]
   timeoutMs?: number
@@ -69,13 +74,14 @@ export type HttpInitLike = {
 /**
  * The request body for one routing decision: two questions Jev answers in
  * parallel, the tier as a Choice and the effort as a Score.
+ *
+ * The model field is added by askJev depending on which provider is used.
  */
 export function requestBodyOf(state: string, offered: readonly Tier[]) {
   const criteria: Record<string, string> = {}
   for (const tier of offered) criteria[tier] = TIER_CRITERIA[tier]
 
   return {
-    model: JEV_MODEL,
     state,
     questions: {
       tier: {
@@ -102,24 +108,32 @@ export function requestBodyOf(state: string, offered: readonly Tier[]) {
  * the router ran at all.
  */
 export async function askJev(args: AskArgs): Promise<JevResult> {
-  const { fetch, sleep, apiKey, state, offered, now = () => Date.now() } = args
+  const { fetch, sleep, provider, state, offered, now = () => Date.now() } = args
   const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const started = now()
   const since = () => now() - started
 
-  if (!apiKey) return { ok: false, reason: 'no AI_GATEWAY_API_KEY', ms: 0 }
+  if (!provider.ok) return { ok: false, reason: provider.reason, ms: 0 }
   if (state.trim() === '') return { ok: false, reason: 'empty prompt', ms: 0 }
   if (offered.length === 0) return { ok: false, reason: 'no tiers offered', ms: 0 }
 
   const TIMED_OUT = Symbol('timed-out')
 
-  const call = fetch(ENDPOINT, {
+  // Build the request body. For TypeSafe direct, we use the model name directly.
+  // For the gateway, we still ask for it but the gateway ignores our model field
+  // and uses typesafe-ai/jev regardless.
+  const body = {
+    ...requestBodyOf(state, offered),
+    model: provider.model,
+  }
+
+  const call = fetch(provider.endpoint, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${apiKey}`,
+      authorization: `Bearer ${provider.apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify(requestBodyOf(state, offered)),
+    body: JSON.stringify(body),
   })
 
   let response: HttpResponseLike

@@ -7,6 +7,7 @@
 import type { JevResult } from './jev.ts'
 import { LOW_CONFIDENCE } from './label.ts'
 import { decisionOf, type Decision, type Tier } from './policy.ts'
+import type { ProviderResult } from './provider.ts'
 
 /** One turn's outcome, kept for the status report. */
 export type Attempt = {
@@ -17,7 +18,7 @@ export type Attempt = {
 export type Status = {
   enabled: boolean
   surface: string | null
-  hasKey: boolean
+  provider: ProviderResult
   timeoutMs: number
   offered: readonly Tier[]
   excluded: readonly Tier[]
@@ -74,9 +75,15 @@ export function statusReport(status: Status): string {
 
   lines.push(`  routing   ${status.enabled ? 'on' : 'off (/jev on)'}`)
   lines.push(`  surface   ${status.surface ?? 'unknown'}`)
-  lines.push(
-    `  gateway   ${status.hasKey ? 'AI_GATEWAY_API_KEY is set' : 'NO KEY — nothing will route'}`,
-  )
+
+  if (status.provider.ok) {
+    const key =
+      status.provider.name === 'typesafe' ? 'TYPESAFE_API_KEY' : 'AI_GATEWAY_API_KEY'
+    lines.push(`  provider  ${status.provider.name} · ${key} is set`)
+  } else {
+    lines.push(`  provider  NO KEYS — nothing will route`)
+  }
+
   lines.push(`  budget    ${status.timeoutMs}ms`)
   lines.push(`  tiers     ${status.offered.join(', ')}`)
   lines.push(

@@ -10,6 +10,7 @@ import {
   toggleReply,
   type Status,
 } from '../hooks/status.ts'
+import type { ProviderResult } from '../hooks/provider.ts'
 
 const decision = {
   tier: 'fable' as const,
@@ -18,10 +19,23 @@ const decision = {
   confidence: 0.97,
 }
 
+const goodProvider: ProviderResult = {
+  ok: true,
+  name: 'gateway',
+  endpoint: 'https://ai-gateway.vercel.sh/v1/evaluate',
+  model: 'typesafe-ai/jev',
+  apiKey: 'test-key',
+}
+
+const noKeyProvider: ProviderResult = {
+  ok: false,
+  reason: 'no TYPESAFE_API_KEY or AI_GATEWAY_API_KEY',
+}
+
 const base: Status = {
   enabled: true,
   surface: 'desktop',
-  hasKey: true,
+  provider: goodProvider,
   timeoutMs: 1500,
   offered: ['haiku', 'sonnet', 'opus', 'fable'],
   excluded: [],
@@ -34,12 +48,12 @@ describe('status report', () => {
     const lines = statusReport(base).split('\n')
     assert.match(lines[1] ?? '', /routing\s+on/)
     assert.match(lines[2] ?? '', /surface\s+desktop/)
-    assert.match(lines[3] ?? '', /AI_GATEWAY_API_KEY is set/)
+    assert.match(lines[3] ?? '', /gateway.*AI_GATEWAY_API_KEY is set/)
   })
 
   test('a missing key is stated loudly, not implied', () => {
-    const text = statusReport({ ...base, hasKey: false })
-    assert.match(text, /NO KEY — nothing will route/)
+    const text = statusReport({ ...base, provider: noKeyProvider })
+    assert.match(text, /NO KEYS — nothing will route/)
   })
 
   test('routing off says how to turn it back on', () => {
@@ -110,8 +124,8 @@ describe('live line', () => {
 
   test('an unrouted turn announces why, rather than going silent', () => {
     assert.equal(
-      liveLine({ prompt: 'x', ms: 12, skipped: 'no AI_GATEWAY_API_KEY' }),
-      '> ⚠️ `unrouted` · no AI_GATEWAY_API_KEY',
+      liveLine({ prompt: 'x', ms: 12, skipped: 'no TYPESAFE_API_KEY or AI_GATEWAY_API_KEY' }),
+      '> ⚠️ `unrouted` · no TYPESAFE_API_KEY or AI_GATEWAY_API_KEY',
     )
   })
 
