@@ -93,10 +93,8 @@ describe('register: the route in the reply', () => {
 
     assert.equal(sent.model, 'claude-opus-5')
     assert.equal(sent.effort, 'high')
-    assert.equal(
-      texts[0],
-      '> ✳️ `opus` · high · 91% · 0ms\n\n---\n\nHello',
-    )
+    // The latency is wall-clock, so it is matched loosely.
+    assert.match(texts[0]!, /^> ✳️ `opus` · high · 91% · \d+ms\n\n---\n\nHello$/)
     assert.equal(texts[1], ' there.')
     assert.equal(chunks[0]!.kind, 'engine', 'engine chunks pass through untouched')
   })
