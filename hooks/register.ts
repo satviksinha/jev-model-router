@@ -5,6 +5,7 @@ import { labelOf, withLabel } from './label.ts'
 import { excludedTiers, offeredTiers, type Decision } from './policy.ts'
 import { providerOf } from './provider.ts'
 import {
+  addUsage,
   announceReply,
   attemptOf,
   HISTORY_LIMIT,
@@ -38,6 +39,11 @@ export function register(on: On) {
   /** turnId → the line to put in front of the reply, until it has been. */
   const pending = new Map<string, string>()
   const attempts: Attempt[] = []
+  /**
+   * turnId → its attempt, so each step's `stop` chunk can add what the API
+   * reported to the right turn. The same objects as in `attempts`.
+   */
+  const byTurn = new Map<string, Attempt>()
   let latest: Decision | null = null
   let enabled = true
   let announce = true
@@ -127,6 +133,8 @@ export function register(on: On) {
     // announcement can never disagree about what happened.
     const attempt = attemptOf(e.text, result, offered)
     record(attempt)
+    byTurn.set(e.turnId, attempt)
+    trim(byTurn)
 
     // The line goes into the reply's own text, in turn.step below. Render
     // hooks and $.ui.log both drew nothing in the desktop app; the model's
@@ -146,7 +154,10 @@ export function register(on: On) {
   })
 
   // turn.step streams, so it is an async generator. The model rewrite goes
-  // down in `e`; the label comes back up in the first text chunk of the turn.
+  // down in `e`; the label comes back up in the first text chunk of the turn,
+  // and the `stop` chunk's usage, which names the model the API says answered,
+  // is kept on the turn. That is the check on the rewrite: the route line is
+  // what was asked for, /jev shows what was got.
   //
   // Text chunks concatenate per block, so prefixing the first one puts the
   // line at the top of the reply. This is the recorded text too, so the model
@@ -164,6 +175,10 @@ export function register(on: On) {
         pending.delete(e.turnId)
         yield { ...chunk, text: `${label}${REPLY_SEPARATOR}${chunk.text}` }
         continue
+      }
+      if (chunk.kind === 'stop' && chunk.usage) {
+        const attempt = byTurn.get(e.turnId)
+        if (attempt) addUsage(attempt, chunk.usage)
       }
       yield chunk
     }

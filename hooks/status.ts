@@ -9,11 +9,62 @@ import { LOW_CONFIDENCE } from './label.ts'
 import { decisionOf, type Decision, type Tier } from './policy.ts'
 import type { ProviderResult } from './provider.ts'
 
-/** One turn's outcome, kept for the status report. */
+/**
+ * What the API said a turn cost, and which model it says answered. The
+ * shape of the engine's `TurnUsage`, spelled out here so this file stays
+ * free of engine types and runs under plain `node`.
+ */
+export type Usage = {
+  /** The model that answered, by the id the API reports. */
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_input_tokens: number
+  cache_creation_input_tokens: number
+}
+
+/**
+ * One turn's outcome, kept for the status report. `usage` arrives after the
+ * decision, from the `stop` chunk of each step, so it is filled in later and
+ * is absent for a turn still running or one whose response never came.
+ */
 export type Attempt = {
   prompt: string
   ms: number
+  usage?: Usage
 } & ({ decision: Decision } | { skipped: string })
+
+/**
+ * Folds one step's usage into its turn: counts sum, the model is the last
+ * step's, as the engine defines a turn's usage. Mutates, because the same
+ * object sits in the history and in the by-turn lookup.
+ */
+export function addUsage(attempt: Attempt, usage: Usage): void {
+  const prior = attempt.usage
+  attempt.usage = {
+    model: usage.model,
+    input_tokens: (prior?.input_tokens ?? 0) + usage.input_tokens,
+    output_tokens: (prior?.output_tokens ?? 0) + usage.output_tokens,
+    cache_read_input_tokens:
+      (prior?.cache_read_input_tokens ?? 0) + usage.cache_read_input_tokens,
+    cache_creation_input_tokens:
+      (prior?.cache_creation_input_tokens ?? 0) +
+      usage.cache_creation_input_tokens,
+  }
+}
+
+/**
+ * How much of what the turn's requests carried was read from cache, 0 to 1.
+ * Everything carried is uncached input plus cache reads plus cache writes;
+ * this is the cost-relevant measure, since reads bill at a tenth.
+ */
+export function cacheRatio(usage: Usage): number {
+  const carried =
+    usage.input_tokens +
+    usage.cache_read_input_tokens +
+    usage.cache_creation_input_tokens
+  return carried === 0 ? 0 : usage.cache_read_input_tokens / carried
+}
 
 export type Status = {
   enabled: boolean
@@ -66,6 +117,41 @@ function attemptLine(attempt: Attempt): string {
   return `  ${when}  ${tier}·${effort} ${confidence.toFixed(2)}${doubt}  ${shorten(attempt.prompt)}`
 }
 
+/** Thousands, rounded, for token counts: 130k, 2k, 0k. */
+function kOf(n: number): string {
+  return `${Math.round(n / 1000)}k`
+}
+
+/**
+ * The line under a turn saying what the API reports actually answered, and
+ * what the requests carried. This is the intrinsic check: the route line is
+ * what we asked for; this is what we got.
+ *
+ * A dated id (`claude-opus-5-20260901`) still confirms `claude-opus-5`. A
+ * different model is marked `≠`, which is the one case worth looking at.
+ */
+function usageLine(attempt: Attempt): string | null {
+  const usage = attempt.usage
+  if (!usage) return null
+
+  let verdict = ''
+  if ('decision' in attempt) {
+    const asked = attempt.decision.model
+    const matches = usage.model === asked || usage.model.startsWith(`${asked}-`)
+    verdict = matches ? ' ✓' : ` ≠ ${asked}`
+  }
+
+  const carried =
+    usage.input_tokens +
+    usage.cache_read_input_tokens +
+    usage.cache_creation_input_tokens
+  const pct = Math.round(cacheRatio(usage) * 100)
+  return (
+    `          answered ${usage.model}${verdict}  ` +
+    `cache ${pct}%  ${kOf(carried)} in  ${kOf(usage.output_tokens)} out`
+  )
+}
+
 /**
  * The report, as plain lines. Written so the first three tell you whether
  * the thing is on at all, which is the question that brings people here.
@@ -100,7 +186,11 @@ export function statusReport(status: Status): string {
   }
 
   lines.push('  Recent turns, newest first:')
-  for (const attempt of status.attempts) lines.push(attemptLine(attempt))
+  for (const attempt of status.attempts) {
+    lines.push(attemptLine(attempt))
+    const usage = usageLine(attempt)
+    if (usage !== null) lines.push(usage)
+  }
 
   return lines.join('\n')
 }

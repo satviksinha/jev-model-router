@@ -45,6 +45,20 @@ async function* modelSays(...texts: string[]) {
   return { stopReason: 'end_turn' }
 }
 
+const usage = (model: string, input_tokens = 1000) => ({
+  model,
+  input_tokens,
+  output_tokens: 50,
+  cache_read_input_tokens: 9000,
+  cache_creation_input_tokens: 0,
+})
+
+async function* answeredBy(model: string, stopReason = 'end_turn', input_tokens = 1000) {
+  yield { kind: 'text', index: 0, text: 'reply', ref: 1 }
+  yield { kind: 'stop', stopReason, usage: usage(model, input_tokens), ref: 2 }
+  return { stopReason }
+}
+
 async function collect<T>(gen: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = []
   for await (const c of gen) out.push(c)
@@ -132,5 +146,39 @@ describe('register: the route in the reply', () => {
     )
     assert.equal(sent.model, 'claude-opus-5', 'still routed')
     assert.equal(chunks.find(c => c.kind === 'text')!.text, 'reply')
+  })
+
+  test('the stop chunk’s usage lands on the turn and /jev confirms what answered', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't6' }, async (e: unknown) => e)
+    const chunks = await collect(hooks.get('turn.step')!($, { turnId: 't6', index: 0 }, () => answeredBy('claude-opus-5')))
+    assert.equal(chunks.at(-1)!.kind, 'stop', 'the stop chunk still reaches the engine')
+
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.match(out.text, /claude-opus-5 ✓/)
+    assert.match(out.text, /cache 90%/)
+  })
+
+  test('a turn of two steps sums both requests', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't7' }, async (e: unknown) => e)
+    await collect(hooks.get('turn.step')!($, { turnId: 't7', index: 0 }, () => answeredBy('claude-opus-5', 'tool_use', 1000)))
+    await collect(hooks.get('turn.step')!($, { turnId: 't7', index: 1 }, () => answeredBy('claude-opus-5', 'end_turn', 3000)))
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.match(out.text, /22k in/, out.text)
+  })
+
+  test('a different model answering than was asked for is flagged', async () => {
+    const { hooks, $ } = load()
+    await hooks.get('turn.start')!($, { text: 'x', turnId: 't8' }, async (e: unknown) => e)
+    await collect(hooks.get('turn.step')!($, { turnId: 't8', index: 0 }, () => answeredBy('claude-haiku-4-5')))
+    const out = await hooks.get('command.run:{"command":"jev"}')!($, { args: '' })
+    assert.match(out.text, /claude-haiku-4-5 ≠ claude-opus-5/)
+  })
+
+  test('a stop chunk for a turn we never saw is left alone', async () => {
+    const { hooks, $ } = load()
+    const chunks = await collect(hooks.get('turn.step')!($, { turnId: 'ghost', index: 0 }, () => answeredBy('claude-opus-5')))
+    assert.equal(chunks.length, 2)
   })
 })

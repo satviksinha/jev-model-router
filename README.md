@@ -101,12 +101,29 @@ jev-router
 
   Recent turns, newest first:
    641ms  fable·xhigh 0.97  help me plan the architecture
+          answered claude-fable-5-1 ✓  cache 91%  130k in  2k out
    402ms  haiku·medium 0.75  rename the variable foo to bar
+          answered claude-haiku-4-5 ✓  cache 4%  128k in  0k out
     12ms  unrouted — gateway said HTTP 403 (customer_verification_required)
 ```
 
 An unrouted turn says why. That matters because the router fails open, so a
 dead provider and a missing plugin look identical from the outside.
+
+The `answered` line under each turn is the API's own report, taken from the
+`usage` on each step's `stop` chunk: which model actually answered, and what
+the turn's requests carried. The route line above it is what the mod asked
+for; this is what it got. `✓` means they agree (a dated id such as
+`claude-opus-5-20260901` still counts); `≠ claude-opus-5` means something else
+answered, which is the one case worth looking into. There is no need to proxy
+traffic or force a bogus model id to check the rewrite lands.
+
+`cache` is the share of the turn's input read from the prompt cache. The
+cache is per model, so the turn after a switch runs cold: `cache 4%` on the
+haiku turn above is the price of leaving fable. Cache reads bill at a tenth of
+uncached input, so a switch on a large context costs roughly ten times what
+staying would have, once. Watch this number to see whether Jev's switching is
+eating what the cheaper tiers save.
 
 **The first line of every reply.** The route is written into the reply's
 own text, as the first text chunk streams through `turn.step`:
@@ -226,7 +243,7 @@ hooks/jev.ts        the request shape, timeout, named failures
 hooks/provider.ts   which backend (TypeSafe direct or gateway) to use
 hooks/policy.ts     the tiers, the criteria, answers → model and effort
 hooks/label.ts      decision → footer string
-hooks/status.ts     the per-turn line and what /jev prints
+hooks/status.ts     the per-turn line, what /jev prints, usage per turn
 tests/              node:test suites; register.test.ts drives the real hooks
                     with a fake engine and asserts the stream transform
 scripts/            check-jev and try-prompts, for setup and tuning

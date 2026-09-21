@@ -9,6 +9,10 @@ import {
   statusReport,
   toggleReply,
   type Status,
+  addUsage,
+  cacheRatio,
+  type Attempt,
+  type Usage,
 } from '../hooks/status.ts'
 import type { ProviderResult } from '../hooks/provider.ts'
 
@@ -189,5 +193,80 @@ describe('attemptOf', () => {
       skippedOf(attemptOf('x', { ok: true, ms: 5, answers: { tier: {} } }, offered)),
       /named no tier we offered/,
     )
+  })
+})
+
+describe('usage: what actually answered', () => {
+  const routed = (): Attempt => ({ prompt: 'plan it', ms: 641, decision })
+  const usage = (over: Partial<Usage> = {}): Usage => ({
+    model: 'claude-fable-5-1',
+    input_tokens: 3_000,
+    output_tokens: 900,
+    cache_read_input_tokens: 117_000,
+    cache_creation_input_tokens: 10_000,
+    ...over,
+  })
+
+  test('a stop chunk’s usage is kept on the turn', () => {
+    const a = routed()
+    addUsage(a, usage())
+    assert.equal(a.usage?.model, 'claude-fable-5-1')
+    assert.equal(a.usage?.cache_read_input_tokens, 117_000)
+  })
+
+  test('a turn of several steps sums its counts and keeps the last model', () => {
+    const a = routed()
+    addUsage(a, usage({ input_tokens: 1000, output_tokens: 100 }))
+    addUsage(a, usage({ input_tokens: 2000, output_tokens: 200, model: 'claude-fable-5-1-later' }))
+    assert.equal(a.usage?.input_tokens, 3000)
+    assert.equal(a.usage?.output_tokens, 300)
+    assert.equal(a.usage?.model, 'claude-fable-5-1-later')
+  })
+
+  test('the cache ratio is what was read over everything the request carried', () => {
+    assert.equal(cacheRatio(usage()), 0.9)
+    assert.equal(cacheRatio(usage({ input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })), 0)
+  })
+
+  test('the report confirms the model the API says answered', () => {
+    const a = routed()
+    addUsage(a, usage())
+    const text = statusReport({ ...base, attempts: [a] })
+    assert.match(text, /claude-fable-5-1 ✓/)
+    assert.match(text, /cache 90%/)
+    assert.match(text, /130k in/)
+  })
+
+  test('a dated id still counts as the model that was asked for', () => {
+    const a = routed()
+    addUsage(a, usage({ model: 'claude-fable-5-1-20260901' }))
+    assert.match(statusReport({ ...base, attempts: [a] }), /claude-fable-5-1-20260901 ✓/)
+  })
+
+  test('a different model answering is flagged, which is the whole point', () => {
+    const a = routed()
+    addUsage(a, usage({ model: 'claude-opus-5' }))
+    const text = statusReport({ ...base, attempts: [a] })
+    assert.match(text, /claude-opus-5 ≠ claude-fable-5-1/)
+    assert.doesNotMatch(text, /✓/)
+  })
+
+  test('an unrouted turn still shows what answered, with nothing to check against', () => {
+    const a: Attempt = { prompt: 'x', ms: 0, skipped: 'timed out' }
+    addUsage(a, usage({ model: 'claude-opus-5' }))
+    const text = statusReport({ ...base, attempts: [a] })
+    assert.match(text, /claude-opus-5/)
+    assert.doesNotMatch(text, /[✓≠]/)
+  })
+
+  test('a turn with no usage yet gets one line, not a blank second one', () => {
+    const lines = statusReport({ ...base, attempts: [routed()] }).split('\n')
+    assert.equal(lines.filter(l => l.includes('answered')).length, 0)
+  })
+
+  test('the usage line stays within one screen', () => {
+    const a = routed()
+    addUsage(a, usage({ model: 'claude-fable-5-1-20260901-preview', cache_read_input_tokens: 1_900_000 }))
+    for (const line of statusReport({ ...base, attempts: [a] }).split('\n')) assert.ok(line.length < 100, line)
   })
 })
