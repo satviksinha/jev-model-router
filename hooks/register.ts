@@ -21,6 +21,7 @@ import {
   REPLY_SEPARATOR,
   statusReport,
   toggleReply,
+  stickyCommand,
   usageFooter,
   type AgentTag,
   type Attempt,
@@ -34,17 +35,6 @@ const CACHE_LIMIT = 32;
  * the footer would land in the middle of a reply. Every other reason ends it.
  */
 const MID_TURN: ReadonlySet<string> = new Set(["tool_use", "pause_turn"]);
-
-/**
- * The confidence a switch must clear this turn, or null when the flag is off.
- * Read per turn, like the other settings, so retuning needs no restart.
- */
-async function stickyThreshold($: {
-  env: { get: (k: string) => Promise<string | undefined> };
-}): Promise<number | null> {
-  if (!stickyOf(await $.env.get("JEV_ROUTER_STICKY"))) return null;
-  return thresholdOf(await $.env.get("JEV_ROUTER_STICKY_CONFIDENCE"));
-}
 
 /**
  * Names the subagent a step runs in, from the session's agent list. A row may
@@ -96,6 +86,12 @@ export function register(on: On) {
    */
   const byTurn = new Map<string, Attempt>();
   let latest: Decision | null = null;
+  /**
+   * The confidence a switch must clear, or null when switches are free. The
+   * env vars are the session's starting value; `/jev sticky` overrides them
+   * from then on, so retuning does not mean restarting the session.
+   */
+  let sticky: number | null = null;
   /** The tier the last routed turn ran on; what a shaky switch is held to. */
   let running: Decision | null = null;
   let enabled = true;
@@ -129,6 +125,9 @@ export function register(on: On) {
       description: "Jev routing: status, or `on` / `off`.",
     });
     surface = await $.session.surface();
+    sticky = stickyOf(await $.env.get("JEV_ROUTER_STICKY"))
+      ? thresholdOf(await $.env.get("JEV_ROUTER_STICKY_CONFIDENCE"))
+      : null;
     return next(e);
   });
 
@@ -146,6 +145,15 @@ export function register(on: On) {
       return { text: announceReply(announce) };
     }
 
+    // `--sticky` as well as `sticky`: the flag spelling is what people reach
+    // for, and refusing it would teach nothing.
+    const sub = arg.replace(/^-+/, "");
+    if (sub === "sticky" || sub.startsWith("sticky ")) {
+      const result = stickyCommand(sub.slice("sticky".length), sticky);
+      sticky = result.sticky;
+      return { text: result.text };
+    }
+
     const excluded = excludedTiers(await $.env.get("JEV_ROUTER_EXCLUDE"));
     const provider = providerOf({
       TYPESAFE_API_KEY: await $.env.get("TYPESAFE_API_KEY"),
@@ -159,7 +167,7 @@ export function register(on: On) {
         surface: surface ?? (await $.session.surface()),
         provider,
         timeoutMs: timeoutOf(await $.env.get("JEV_ROUTER_TIMEOUT_MS")),
-        sticky: await stickyThreshold($),
+        sticky,
         offered: offeredTiers(excluded),
         excluded: [...excluded],
         announce,
@@ -193,10 +201,7 @@ export function register(on: On) {
 
     // One place where the turn's outcome is settled, so the report and the
     // announcement can never disagree about what happened.
-    const attempt = attemptOf(e.text, result, offered, {
-      sticky: await stickyThreshold($),
-      running,
-    });
+    const attempt = attemptOf(e.text, result, offered, { sticky, running });
     record(attempt);
     byTurn.set(e.turnId, attempt);
     trim(byTurn);

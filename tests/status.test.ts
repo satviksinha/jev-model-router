@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import {
   announceReply,
   attemptOf,
+  stickyCommand,
   liveLine,
   REPLY_SEPARATOR,
   statusReport,
@@ -15,6 +16,7 @@ import {
   type Attempt,
   type Usage,
 } from "../hooks/status.ts";
+import { DEFAULT_STICKY_CONFIDENCE } from "../hooks/policy.ts";
 import type { ProviderResult } from "../hooks/provider.ts";
 
 const decision = {
@@ -547,5 +549,51 @@ describe("a held turn", () => {
       statusReport({ ...base, sticky: 0.75 }),
       /sticky\s+on, switch needs 75%/,
     );
+  });
+});
+
+describe("the sticky subcommand", () => {
+  test("bare turns it on at the default bar", () => {
+    const r = stickyCommand("", null);
+    assert.equal(r.sticky, DEFAULT_STICKY_CONFIDENCE);
+    assert.match(r.text, /75%/);
+  });
+
+  test("bare keeps a bar already set rather than resetting it", () => {
+    assert.equal(stickyCommand("", 0.6).sticky, 0.6);
+    assert.equal(stickyCommand("on", 0.6).sticky, 0.6);
+  });
+
+  test("off turns it off", () => {
+    const r = stickyCommand("off", 0.6);
+    assert.equal(r.sticky, null);
+    assert.match(r.text, /freely/);
+  });
+
+  test("a number sets the bar and turns it on", () => {
+    assert.equal(stickyCommand("0.6", null).sticky, 0.6);
+    assert.equal(
+      stickyCommand("60", null).sticky,
+      0.6,
+      "a percentage is read as one",
+    );
+    assert.equal(
+      stickyCommand("60%", null).sticky,
+      0.6,
+      "and so is one with a sign",
+    );
+  });
+
+  test("a bar outside the range is refused, and nothing changes", () => {
+    for (const bad of ["0", "1", "100", "-2", "nonsense"]) {
+      const r = stickyCommand(bad, 0.6);
+      assert.equal(r.sticky, 0.6, bad);
+      assert.match(r.text, /between/, bad);
+    }
+  });
+
+  test("the reply says how to undo it, since the state is invisible otherwise", () => {
+    assert.match(stickyCommand("", null).text, /\/jev sticky off/);
+    assert.match(stickyCommand("off", 0.6).text, /\/jev sticky/);
   });
 });

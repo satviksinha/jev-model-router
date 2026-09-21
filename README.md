@@ -254,10 +254,12 @@ model, which this mod does not touch — the rewrite happens per request, in
   giving up and running unrouted. The default is 1500ms. Ten live calls on
   2026-09-20 ran 402ms to 839ms, so an earlier 800ms default was failing open
   on the slowest of them.
-- `JEV_ROUTER_STICKY=1` makes a tier switch clear a confidence bar before the
-  model moves. Off by default. See below.
-- `JEV_ROUTER_STICKY_CONFIDENCE=0.6` sets that bar. The default is 0.75. A
-  value above 1 is read as a percentage, so `75` and `0.75` mean the same.
+- `/jev sticky` makes a tier switch clear a confidence bar before the model
+  moves, `/jev sticky 0.6` sets that bar, `/jev sticky off` stops. `--sticky`
+  works too. See below.
+- `JEV_ROUTER_STICKY=1` and `JEV_ROUTER_STICKY_CONFIDENCE=0.6` set the same
+  thing for a session before it starts, for a project that always wants it.
+  The command overrides them from then on.
 
 ## Holding a shaky switch
 
@@ -266,8 +268,8 @@ haiku, so the turn that switches pays full input tokens and a slower first
 token. A router that flips tier on a 51% hunch can pick the cheaper model
 every time and still cost more than staying put.
 
-With `JEV_ROUTER_STICKY=1`, a turn that names a different tier than the last
-one has to clear the bar to move. Below it, the turn runs on the tier already
+Run `/jev sticky` and a turn that names a different tier than the last one
+has to clear the bar to move. Below it, the turn runs on the tier already
 loaded, and says so:
 
 ```
@@ -286,9 +288,15 @@ What the next turn holds to is the tier actually running, not the one Jev
 named. Three shaky haiku calls in a row will not creep the session onto haiku
 one turn at a time. An unrouted turn changes nothing, since nothing ran.
 
-0.75 is a starting point, not a measured optimum. `npm run try-prompts`
-prints Jev's confidence across a set of prompts, which is the input to
-picking a better one.
+The bar starts at 0.75, which is a starting point rather than a measured
+optimum. Retune it in place with `/jev sticky 0.6` and watch the next few
+turns; `npm run try-prompts` prints Jev's confidence across a set of prompts,
+which is the other input to picking a number. `/jev sticky` on its own keeps
+a bar you have already set, so turning it off and on again does not lose it.
+
+A session that should always be sticky can say so before it starts, with
+`JEV_ROUTER_STICKY=1` in the `env` block of settings.json. The command wins
+after that.
 
 ## Checking and tuning
 

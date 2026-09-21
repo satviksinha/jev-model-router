@@ -552,8 +552,19 @@ describe("register: the route in the reply", () => {
 });
 
 describe("register: stickiness", () => {
-  const sticky = (over: Record<string, string> = {}) =>
-    load({ AI_GATEWAY_API_KEY: "gw-key", JEV_ROUTER_STICKY: "1", ...over });
+  /**
+   * A session whose env asks for stickiness, started: the env is read in
+   * session.start, which the engine always fires and a test must too.
+   */
+  const sticky = async (over: Record<string, string> = {}) => {
+    const kit = load({
+      AI_GATEWAY_API_KEY: "gw-key",
+      JEV_ROUTER_STICKY: "1",
+      ...over,
+    });
+    await kit.hooks.get("session.start")!(kit.$, {}, async (e: unknown) => e);
+    return kit;
+  };
 
   /** Runs one turn end to end and says which model the request named. */
   async function turn(hooks: Map<string, Function>, $: unknown, id: string) {
@@ -592,7 +603,7 @@ describe("register: stickiness", () => {
   });
 
   test("with the flag on, a shaky switch is held on the last tier", async () => {
-    const { hooks, $, setTier } = sticky();
+    const { hooks, $, setTier } = await sticky();
     await turn(hooks, $, "b1");
     setTier("haiku", 0.4);
     const second = await turn(hooks, $, "b2");
@@ -605,7 +616,7 @@ describe("register: stickiness", () => {
   });
 
   test("a confident switch still goes through with the flag on", async () => {
-    const { hooks, $, setTier } = sticky();
+    const { hooks, $, setTier } = await sticky();
     await turn(hooks, $, "c1");
     setTier("haiku", 0.9);
     const second = await turn(hooks, $, "c2");
@@ -613,7 +624,7 @@ describe("register: stickiness", () => {
   });
 
   test("the bar is read from the environment", async () => {
-    const { hooks, $, setTier } = sticky({
+    const { hooks, $, setTier } = await sticky({
       JEV_ROUTER_STICKY_CONFIDENCE: "0.3",
     });
     await turn(hooks, $, "d1");
@@ -626,7 +637,7 @@ describe("register: stickiness", () => {
   });
 
   test("effort moves on a held turn, since it keeps the same model", async () => {
-    const { hooks, $, setTier } = sticky();
+    const { hooks, $, setTier } = await sticky();
     await turn(hooks, $, "e1");
     setTier("haiku", 0.4, 0);
     const second = await turn(hooks, $, "e2");
@@ -635,7 +646,7 @@ describe("register: stickiness", () => {
   });
 
   test("a held turn becomes the tier the next turn holds to", async () => {
-    const { hooks, $, setTier } = sticky();
+    const { hooks, $, setTier } = await sticky();
     await turn(hooks, $, "f1");
     setTier("haiku", 0.4);
     await turn(hooks, $, "f2");
@@ -648,7 +659,7 @@ describe("register: stickiness", () => {
   });
 
   test("an unrouted turn does not become something to hold to", async () => {
-    const { hooks, $, setTier, fail } = sticky();
+    const { hooks, $, setTier, fail } = await sticky();
     await turn(hooks, $, "g1");
     fail();
     await turn(hooks, $, "g2");
@@ -662,10 +673,105 @@ describe("register: stickiness", () => {
   });
 
   test("/jev says whether stickiness is on and what the bar is", async () => {
-    const { hooks, $ } = sticky({ JEV_ROUTER_STICKY_CONFIDENCE: "0.6" });
+    const { hooks, $ } = await sticky({ JEV_ROUTER_STICKY_CONFIDENCE: "0.6" });
     const out = await hooks.get('command.run:{"command":"jev"}')!($, {
       args: "",
     });
     assert.match(out.text, /sticky\s+on, switch needs 60%/);
+  });
+});
+
+describe("register: the sticky subcommand", () => {
+  const run = (hooks: Map<string, Function>, $: unknown, args: string) =>
+    hooks.get('command.run:{"command":"jev"}')!($, { args });
+
+  async function turn(hooks: Map<string, Function>, $: unknown, id: string) {
+    await hooks.get("turn.start")!(
+      $,
+      { text: "x", turnId: id },
+      async (e: unknown) => e,
+    );
+    let sent: { model?: string } = {};
+    await collect(
+      hooks.get("turn.step")!(
+        $,
+        { turnId: id, index: 0 },
+        (e: { model: string }) => {
+          sent = e;
+          return answeredBy("claude-opus-5");
+        },
+      ),
+    );
+    return sent;
+  }
+
+  test("/jev sticky turns it on for the session, with no env var set", async () => {
+    const { hooks, $, setTier } = load();
+    await turn(hooks, $, "h1");
+    await run(hooks, $, "sticky");
+    setTier("haiku", 0.4);
+    assert.equal((await turn(hooks, $, "h2")).model, "claude-opus-5", "held");
+  });
+
+  test("/jev --sticky is the same command, since that is what people type", async () => {
+    const { hooks, $, setTier } = load();
+    await turn(hooks, $, "i1");
+    await run(hooks, $, "--sticky");
+    setTier("haiku", 0.4);
+    assert.equal((await turn(hooks, $, "i2")).model, "claude-opus-5");
+  });
+
+  test("/jev sticky off turns it back off", async () => {
+    const { hooks, $, setTier } = load({
+      AI_GATEWAY_API_KEY: "gw-key",
+      JEV_ROUTER_STICKY: "1",
+    });
+    await turn(hooks, $, "j1");
+    await run(hooks, $, "sticky off");
+    setTier("haiku", 0.4);
+    assert.equal(
+      (await turn(hooks, $, "j2")).model,
+      "claude-haiku-4-5",
+      "switched",
+    );
+  });
+
+  test("/jev sticky 0.3 sets the bar for the session", async () => {
+    const { hooks, $, setTier } = load();
+    await turn(hooks, $, "k1");
+    const out = await run(hooks, $, "sticky 0.3");
+    assert.match(out.text, /30%/);
+    setTier("haiku", 0.4);
+    assert.equal(
+      (await turn(hooks, $, "k2")).model,
+      "claude-haiku-4-5",
+      "0.4 clears a 0.3 bar",
+    );
+  });
+
+  test("the env var is the session’s starting value, and the command overrides it", async () => {
+    const { hooks, $ } = load({
+      AI_GATEWAY_API_KEY: "gw-key",
+      JEV_ROUTER_STICKY: "1",
+      JEV_ROUTER_STICKY_CONFIDENCE: "0.9",
+    });
+    await hooks.get("session.start")!($, {}, async (e: unknown) => e);
+    assert.match(
+      (await run(hooks, $, "")).text,
+      /sticky\s+on, switch needs 90%/,
+    );
+    await run(hooks, $, "sticky 0.5");
+    assert.match(
+      (await run(hooks, $, "")).text,
+      /sticky\s+on, switch needs 50%/,
+    );
+  });
+
+  test("a bar that makes no sense changes nothing and says so", async () => {
+    const { hooks, $ } = load();
+    await run(hooks, $, "sticky 0.5");
+    const out = await run(hooks, $, "sticky 7000");
+    assert.match(out.text, /between/);
+    assert.match((await run(hooks, $, "")).text, /switch needs 50%/);
   });
 });

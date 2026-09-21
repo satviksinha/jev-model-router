@@ -8,6 +8,7 @@ import type { JevResult } from "./jev.ts";
 import { LOW_CONFIDENCE } from "./label.ts";
 import {
   decisionOf,
+  DEFAULT_STICKY_CONFIDENCE,
   stickyDecision,
   type Decision,
   type Tier,
@@ -387,4 +388,52 @@ export function announceReply(announce: boolean): string {
   return announce
     ? "Jev will announce each route in the transcript."
     : "Jev will route quietly. Run /jev to see what it has been doing.";
+}
+
+/**
+ * Reads `/jev sticky`, `/jev sticky off`, `/jev sticky 0.6` and says what the
+ * bar is now. `current` is the session's bar, or null when it is off.
+ *
+ * A bare `sticky` keeps a bar already set rather than resetting it to the
+ * default, so turning it off and on again does not silently lose a tuned
+ * value. A number that cannot be a confidence changes nothing and says so,
+ * rather than falling back to the default: an unnoticed 0.75 is worse than a
+ * refusal, since the point of the bar is knowing which one you are running.
+ */
+export function stickyCommand(
+  rest: string,
+  current: number | null,
+): { sticky: number | null; text: string } {
+  const arg = rest.trim().toLowerCase().replace(/%$/, "");
+
+  if (arg === "off") {
+    return {
+      sticky: null,
+      text: "Switching freely again. /jev sticky holds a shaky switch.",
+    };
+  }
+
+  if (arg === "" || arg === "on") {
+    const bar = current ?? DEFAULT_STICKY_CONFIDENCE;
+    return { sticky: bar, text: stuckAt(bar) };
+  }
+
+  const parsed = Number(arg);
+  const ratio = parsed > 1 ? parsed / 100 : parsed;
+  if (!Number.isFinite(parsed) || ratio <= 0 || ratio >= 1) {
+    return {
+      sticky: current,
+      text:
+        `"${rest.trim()}" is not a confidence. Give a number between 0 and 1 ` +
+        "(0.6), or a percentage (60).",
+    };
+  }
+  return { sticky: ratio, text: stuckAt(ratio) };
+}
+
+function stuckAt(bar: number): string {
+  return (
+    `Holding the tier until Jev is ${Math.round(bar * 100)}% sure of a switch. ` +
+    "/jev sticky off to switch freely."
+  );
 }
