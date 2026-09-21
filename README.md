@@ -3,6 +3,8 @@
 Picks the model for each turn with [Jev](https://docs.typesafe.ai), TypeSafe's
 decision model. Supports both TypeSafe's direct API and the Vercel AI Gateway.
 
+[MIT licensed](LICENSE).
+
 You type a prompt. Before the turn runs, Jev is asked two questions at once:
 which tier should answer this, and how hard should it think. Every model
 request in that turn then goes to the model Jev named, and a line above the
