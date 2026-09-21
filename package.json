@@ -6,7 +6,8 @@
     "test": "node --test 'tests/*.test.ts'",
     "typecheck": "tsc -p .",
     "validate": "claude plugin validate .",
-    "check-gateway": "node scripts/check-gateway.mjs",
+    "check-jev": "node scripts/check-jev.mjs",
+    "check-gateway": "node scripts/check-jev.mjs",
     "try-prompts": "node scripts/try-prompts.mjs"
   },
   "devDependencies": {
