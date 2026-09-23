@@ -39,7 +39,7 @@ export const EFFORTS: readonly Effort[] = [
 export const MODEL_OF: Record<Tier, string> = {
   haiku: "claude-haiku-4-5",
   sonnet: "claude-sonnet-5",
-  opus: "claude-opus-5",
+  opus: "claude-opus-5-5",
   fable: "claude-fable-5-1",
 };
 

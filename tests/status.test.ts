@@ -294,17 +294,17 @@ describe("usage: what actually answered", () => {
 
   test("a different model answering is flagged, which is the whole point", () => {
     const a = routed();
-    addUsage(a, usage({ model: "claude-opus-5" }));
+    addUsage(a, usage({ model: "claude-opus-5-5" }));
     const text = statusReport({ ...base, attempts: [a] });
-    assert.match(text, /claude-opus-5 ≠ claude-fable-5-1/);
+    assert.match(text, /claude-opus-5-5 ≠ claude-fable-5-1/);
     assert.doesNotMatch(text, /✓/);
   });
 
   test("an unrouted turn still shows what answered, with nothing to check against", () => {
     const a: Attempt = { prompt: "x", ms: 0, skipped: "timed out" };
-    addUsage(a, usage({ model: "claude-opus-5" }));
+    addUsage(a, usage({ model: "claude-opus-5-5" }));
     const text = statusReport({ ...base, attempts: [a] });
-    assert.match(text, /claude-opus-5/);
+    assert.match(text, /claude-opus-5-5);
     assert.doesNotMatch(text, /[✓≠]/);
   });
 
@@ -368,9 +368,9 @@ describe("usage footer", () => {
 
   test("a mismatch names both, which is the one case worth looking at", () => {
     const footer = usageFooter(
-      withUsage(routed(), usage({ model: "claude-opus-5" })),
+      withUsage(routed(), usage({ model: "claude-opus-5-5" })),
     )!;
-    assert.match(footer, /api {2}claude-opus-5 ≠ claude-fable-5-1/);
+    assert.match(footer, /api {2}claude-opus-5-5≠ claude-fable-5-1/);
   });
 
   test("a dated id is still the model that was asked for", () => {
@@ -387,10 +387,10 @@ describe("usage footer", () => {
       skipped: "timed out after 1500ms",
     };
     const footer = usageFooter(
-      withUsage(a, usage({ model: "claude-opus-5" })),
+      withUsage(a, usage({ model: "claude-opus-5-5" })),
     )!;
     assert.match(footer, /jev {2}unrouted — timed out after 1500ms/);
-    assert.match(footer, /api {2}claude-opus-5 · cache 90%/);
+    assert.match(footer, /api {2}claude-opus-5-5· cache 90%/);
     assert.doesNotMatch(footer, /[✓≠]/);
   });
 
@@ -482,7 +482,7 @@ describe("turns that are not a typed prompt", () => {
       agent: { type: "Explore", label: "Review library-sync cluster" },
     };
     addUsage(sub, {
-      model: "claude-opus-5",
+      model: "claude-opus-5-5,
       input_tokens: 1000,
       output_tokens: 100,
       cache_read_input_tokens: 0,
@@ -493,7 +493,7 @@ describe("turns that are not a typed prompt", () => {
       text,
       /unrouted — \[agent:Explore\] Review library-sync cluster/,
     );
-    assert.match(text, /answered claude-opus-5 {2}cache 0%/);
+    assert.match(text, /answered claude-opus-5-5{2}cache 0%/);
   });
 });
 

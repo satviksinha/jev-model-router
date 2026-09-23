@@ -200,7 +200,7 @@ function attemptLine(attempt: Attempt): string {
 }
 
 /** Thousands, rounded, for token counts: 130k, 2k, 0k. */
-function kOf(n: number): string {
+function thousandsOf(n: number): string {
   return `${Math.round(n / 1000)}k`;
 }
 
@@ -231,7 +231,7 @@ function usageLine(attempt: Attempt): string | null {
   const pct = Math.round(cacheRatio(usage) * 100);
   return (
     `          answered ${usage.model}${verdict}  ` +
-    `cache ${pct}%  ${kOf(carried)} in  ${kOf(usage.output_tokens)} out`
+    `cache ${pct}%  ${thousandsOf(carried)} in  ${thousandsOf(usage.output_tokens)} out`
   );
 }
 
@@ -257,7 +257,7 @@ export function usageFooter(attempt: Attempt): string | null {
     usage.cache_creation_input_tokens;
   const cost =
     `cache ${Math.round(cacheRatio(usage) * 100)}% · ` +
-    `${kOf(carried)} in · ${kOf(usage.output_tokens)} out`;
+    `${thousandsOf(carried)} in · ${thousandsOf(usage.output_tokens)} out`;
 
   let jev: string;
   let api: string;

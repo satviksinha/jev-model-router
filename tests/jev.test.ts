@@ -200,7 +200,7 @@ describe("jev", () => {
 describe("label", () => {
   const decision = {
     tier: "opus" as const,
-    model: "claude-opus-5",
+    model: "claude-opus-5-5",
     effort: "high" as const,
     confidence: 0.9,
   };

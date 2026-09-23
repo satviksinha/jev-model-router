@@ -128,7 +128,7 @@ describe("register: the route in the reply", () => {
     const chunks = await collect(step);
     const texts = chunks.filter((c) => c.kind === "text").map((c) => c.text);
 
-    assert.equal(sent.model, "claude-opus-5");
+    assert.equal(sent.model, "claude-opus-5-5");
     assert.equal(sent.effort, "high");
     // The latency is wall-clock, so it is matched loosely.
     assert.match(
@@ -227,7 +227,7 @@ describe("register: the route in the reply", () => {
         },
       ),
     );
-    assert.equal(sent.model, "claude-opus-5", "still routed");
+    assert.equal(sent.model, "claude-opus-5-5", "still routed");
     assert.equal(chunks.find((c) => c.kind === "text")!.text, "reply");
   });
 
@@ -240,7 +240,7 @@ describe("register: the route in the reply", () => {
     );
     const chunks = await collect(
       hooks.get("turn.step")!($, { turnId: "t6", index: 0 }, () =>
-        answeredBy("claude-opus-5"),
+        answeredBy("claude-opus-5-5"),
       ),
     );
     assert.equal(
@@ -252,7 +252,7 @@ describe("register: the route in the reply", () => {
     const out = await hooks.get('command.run:{"command":"jev"}')!($, {
       args: "",
     });
-    assert.match(out.text, /claude-opus-5 ✓/);
+    assert.match(out.text, /claude-opus-5-5 ✓/);
     assert.match(out.text, /cache 90%/);
   });
 
@@ -265,12 +265,12 @@ describe("register: the route in the reply", () => {
     );
     await collect(
       hooks.get("turn.step")!($, { turnId: "t7", index: 0 }, () =>
-        answeredBy("claude-opus-5", "tool_use", 1000),
+        answeredBy("claude-opus-5-5", "tool_use", 1000),
       ),
     );
     await collect(
       hooks.get("turn.step")!($, { turnId: "t7", index: 1 }, () =>
-        answeredBy("claude-opus-5", "end_turn", 3000),
+        answeredBy("claude-opus-5-5", "end_turn", 3000),
       ),
     );
     const out = await hooks.get('command.run:{"command":"jev"}')!($, {
@@ -301,7 +301,7 @@ describe("register: the route in the reply", () => {
     const { hooks, $ } = load();
     const chunks = await collect(
       hooks.get("turn.step")!($, { turnId: "ghost", index: 0 }, () =>
-        answeredBy("claude-opus-5"),
+        answeredBy("claude-opus-5-5"),
       ),
     );
     assert.equal(chunks.length, 2);
@@ -316,14 +316,14 @@ describe("register: the route in the reply", () => {
     );
     const chunks = await collect(
       hooks.get("turn.step")!($, { turnId: "t9", index: 0 }, () =>
-        answeredBy("claude-opus-5"),
+        answeredBy("claude-opus-5-5"),
       ),
     );
 
     const texts = chunks.filter((c) => c.kind === "text");
     const footer = texts.at(-1)!.text;
     assert.match(footer, /```\n─+\njev {2}opus·high/);
-    assert.match(footer, /api {2}claude-opus-5 ✓/);
+    assert.match(footer, /api {2}claude-opus-5-5 ✓/);
     assert.equal(
       chunks.at(-1)!.kind,
       "stop",
@@ -350,7 +350,7 @@ describe("register: the route in the reply", () => {
     );
     const mid = await collect(
       hooks.get("turn.step")!($, { turnId: "t10", index: 0 }, () =>
-        answeredBy("claude-opus-5", "tool_use"),
+        answeredBy("claude-opus-5-5", "tool_use"),
       ),
     );
     assert.doesNotMatch(
@@ -363,7 +363,7 @@ describe("register: the route in the reply", () => {
 
     const last = await collect(
       hooks.get("turn.step")!($, { turnId: "t10", index: 1 }, () =>
-        answeredBy("claude-opus-5", "end_turn"),
+        answeredBy("claude-opus-5-5", "end_turn"),
       ),
     );
     assert.match(
@@ -381,12 +381,12 @@ describe("register: the route in the reply", () => {
     );
     await collect(
       hooks.get("turn.step")!($, { turnId: "t11", index: 0 }, () =>
-        answeredBy("claude-opus-5", "tool_use", 1000),
+        answeredBy("claude-opus-5-5", "tool_use", 1000),
       ),
     );
     const last = await collect(
       hooks.get("turn.step")!($, { turnId: "t11", index: 1 }, () =>
-        answeredBy("claude-opus-5", "end_turn", 3000),
+        answeredBy("claude-opus-5-5", "end_turn", 3000),
       ),
     );
     assert.match(last.filter((c) => c.kind === "text").at(-1)!.text, /22k in/);
@@ -402,7 +402,7 @@ describe("register: the route in the reply", () => {
     );
     const chunks = await collect(
       hooks.get("turn.step")!($, { turnId: "t12", index: 0 }, () =>
-        answeredBy("claude-opus-5"),
+        answeredBy("claude-opus-5-5"),
       ),
     );
     assert.equal(
@@ -446,7 +446,7 @@ describe("register: the route in the reply", () => {
     );
     const chunks = await collect(
       hooks.get("turn.step")!($, { turnId: "n1", index: 0 }, () =>
-        answeredBy("claude-opus-5"),
+        answeredBy("claude-opus-5-5"),
       ),
     );
     const texts = chunks.filter((c) => c.kind === "text").map((c) => c.text);
@@ -468,15 +468,15 @@ describe("register: the route in the reply", () => {
           turnId: "sub1",
           index: 0,
           agentId: "agent-1",
-          model: "claude-opus-5",
+          model: "claude-opus-5-5",
         },
         (e: { model: string }) => {
           sent = e;
-          return answeredBy("claude-opus-5");
+          return answeredBy("claude-opus-5-5");
         },
       ),
     );
-    assert.equal(sent.model, "claude-opus-5", "left on the session model");
+    assert.equal(sent.model, "claude-opus-5-5", "left on the session model");
     assert.equal(
       chunks
         .filter((c) => c.kind === "text")
@@ -502,14 +502,14 @@ describe("register: the route in the reply", () => {
       hooks.get("turn.step")!(
         $,
         { turnId: "sub2", index: 0, agentId: "agent-1" },
-        () => answeredBy("claude-opus-5", "tool_use", 1000),
+        () => answeredBy("claude-opus-5-5", "tool_use", 1000),
       ),
     );
     await collect(
       hooks.get("turn.step")!(
         $,
         { turnId: "sub2", index: 1, agentId: "agent-1" },
-        () => answeredBy("claude-opus-5", "end_turn", 3000),
+        () => answeredBy("claude-opus-5-5", "end_turn", 3000),
       ),
     );
     const out = await hooks.get('command.run:{"command":"jev"}')!($, {
@@ -526,7 +526,7 @@ describe("register: the route in the reply", () => {
       hooks.get("turn.step")!(
         $,
         { turnId: "sub3", index: 0, agentId: "agent-unknown-xyz" },
-        () => answeredBy("claude-opus-5"),
+        () => answeredBy("claude-opus-5-5"),
       ),
     );
     const out = await hooks.get('command.run:{"command":"jev"}')!($, {
@@ -544,7 +544,7 @@ describe("register: the route in the reply", () => {
     );
     await collect(
       hooks.get("turn.step")!($, { turnId: "s4", index: 0 }, () =>
-        answeredBy("claude-opus-5"),
+        answeredBy("claude-opus-5-5"),
       ),
     );
     assert.equal(listCalls(), 0);
@@ -580,7 +580,7 @@ describe("register: stickiness", () => {
         { turnId: id, index: 0 },
         (e: { model: string }) => {
           sent = e;
-          return answeredBy("claude-opus-5");
+          return answeredBy("claude-opus-5-5");
         },
       ),
     );
@@ -609,7 +609,7 @@ describe("register: stickiness", () => {
     const second = await turn(hooks, $, "b2");
     assert.equal(
       second.sent.model,
-      "claude-opus-5",
+      "claude-opus-5-5",
       "held on the first turn’s tier",
     );
     assert.match(second.text, /held:haiku/);
@@ -641,7 +641,7 @@ describe("register: stickiness", () => {
     await turn(hooks, $, "e1");
     setTier("haiku", 0.4, 0);
     const second = await turn(hooks, $, "e2");
-    assert.equal(second.sent.model, "claude-opus-5");
+    assert.equal(second.sent.model, "claude-opus-5-5");
     assert.equal(second.sent.effort, "low");
   });
 
@@ -653,7 +653,7 @@ describe("register: stickiness", () => {
     const third = await turn(hooks, $, "f3");
     assert.equal(
       third.sent.model,
-      "claude-opus-5",
+      "claude-opus-5-5",
       "still the tier that is actually running",
     );
   });
@@ -667,7 +667,7 @@ describe("register: stickiness", () => {
     const third = await turn(hooks, $, "g3");
     assert.equal(
       third.sent.model,
-      "claude-opus-5",
+      "claude-opus-5-5",
       "the last turn that actually ran",
     );
   });
@@ -698,7 +698,7 @@ describe("register: the sticky subcommand", () => {
         { turnId: id, index: 0 },
         (e: { model: string }) => {
           sent = e;
-          return answeredBy("claude-opus-5");
+          return answeredBy("claude-opus-5-5");
         },
       ),
     );
@@ -710,7 +710,7 @@ describe("register: the sticky subcommand", () => {
     await turn(hooks, $, "h1");
     await run(hooks, $, "sticky");
     setTier("haiku", 0.4);
-    assert.equal((await turn(hooks, $, "h2")).model, "claude-opus-5", "held");
+    assert.equal((await turn(hooks, $, "h2")).model, "claude-opus-5-5", "held");
   });
 
   test("/jev --sticky is the same command, since that is what people type", async () => {
@@ -718,7 +718,7 @@ describe("register: the sticky subcommand", () => {
     await turn(hooks, $, "i1");
     await run(hooks, $, "--sticky");
     setTier("haiku", 0.4);
-    assert.equal((await turn(hooks, $, "i2")).model, "claude-opus-5");
+    assert.equal((await turn(hooks, $, "i2")).model, "claude-opus-5-5");
   });
 
   test("/jev sticky off turns it back off", async () => {
